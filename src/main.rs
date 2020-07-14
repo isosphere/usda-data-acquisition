@@ -1,9 +1,56 @@
 use std::collections::HashMap;
+use std::fs;
 
-#[macro_use] extern crate lazy_static;
+#[macro_use] 
+extern crate lazy_static;
+extern crate toml;
+extern crate serde;
+extern crate ureq;
 
+use clap::{Arg, App};
 use chrono::{NaiveDate};
 use regex::{Regex};
+use serde_derive::Deserialize;
+use walkdir::{WalkDir, DirEntry};
+
+const HTTP_CONNECT_TIMEOUT: u64 = 25000;
+const HTTP_RECEIVE_TIMEOUT: u64 = 25000;
+
+fn command_usage<'a, 'b>() -> App<'a, 'b> {
+    App::new("data-acquisition")
+    .author("Matthew Scheffel <matt@dataheck.com>")
+    .about("Scrapes data from the USDA")
+    .arg(
+        Arg::with_name("backfill")
+            .short("b")
+            .long("backfill")
+            .takes_value(true)
+            .help("A directory containing historical files")
+            .required(false)
+    )
+    .arg(
+        Arg::with_name("datamart-config")
+            .takes_value(true)
+            .help("Location of datamart scraping configuration")
+            .default_value("config/datamart.toml")
+    )
+}
+
+#[derive(Deserialize, Debug)]
+struct DatamartConfig {
+    name: String,                             // historical "slug name"
+    description: String,
+    independent: String,                     // the independent variable, i.e.: primary key
+    sections: HashMap<String, Vec<String>>    // each section has a name and a list of columns to scrape
+}
+
+#[derive(Deserialize, Debug)]
+struct DatamartResponse { 
+    reportSection: String,
+    reportSections: Vec<String>,
+    stats: HashMap<String, u32>,
+    results: Vec<HashMap<String, Option<String>>>
+}
 
 #[derive(Debug)]
 struct USDADataPackage {
@@ -34,6 +81,101 @@ fn find_line(text_array: &Vec<&str>, pattern:&Regex) -> Result<usize, String> {
     }
 
     return Err(String::from("No match found"))
+}
+
+fn process_datamart(slug_id: String, report_date:Option<NaiveDate>, config: HashMap<String, DatamartConfig>) -> Result<USDADataPackage, String> {
+    if !config.contains_key(&slug_id) {
+        return Err(String::from(format!("Slug ID {} is not known to our datamart configuration.", slug_id)));
+    }
+
+    let mut result = USDADataPackage::new();
+
+    for section in config[&slug_id].sections.keys() {
+        let section_data = result.sections.entry(String::from(section)).or_insert(HashMap::new());
+
+        let target_url = {
+            let base_url = format!("https://mpr.datamart.ams.usda.gov/services/v1.1/reports/{}", slug_id);
+            match report_date {
+                Some(d) => {
+                    format!(
+                        "{base_url}/{section}?q={independent}={report_date}", 
+                        base_url=base_url,
+                        section=section,
+                        independent=config[&slug_id].independent,
+                        report_date=d.format("%m/%d/%Y")
+                    )
+                },
+                None => {
+                    format!("{base_url}/{section}", base_url=base_url, section=section)
+                }
+            }
+        };
+
+        let response = ureq::get(&target_url).timeout_connect(HTTP_CONNECT_TIMEOUT).timeout_read(HTTP_RECEIVE_TIMEOUT).call();
+        
+        if !response.ok() {
+            return Err(String::from(format!("Failed to retrieve data from datamart server with URL {}. Error: {}", target_url, response.into_string().unwrap())));
+        }
+
+        let parsed = {
+            let result = response.into_json_deserialize::<DatamartResponse>();
+            match result {
+                Ok(j) => { j },
+                Err(_) => { 
+                    return Err(String::from(format!("Response from datamart server is not valid JSON, or the structure has changed significantly. Target url: {}", target_url)));
+                }
+            }
+        };
+
+        for entry in parsed.results {
+            let mut data = HashMap::new();
+            let lookup = &config[&slug_id].independent;
+            let independent = {
+                match entry[lookup].as_ref() {
+                    Some(value) => { value },
+                    None => {
+                        // FYI: this actually happens. Values with no assigned date, floating around in the response.
+                        eprintln!("Response contains entries with a null independent field, which is irrational. These entries will be skipped.");
+                        continue;
+                    }
+                }
+            };
+
+            lazy_static!{
+                static ref RE_DATAMART_DATE_CAPTURE: Regex = Regex::new(r"(?P<month>\d+)/(?P<day>\d+)/(?P<year>\d+)").unwrap();
+            }
+
+            let independent = {
+                match RE_DATAMART_DATE_CAPTURE.captures(&independent) {
+                    Some(x) => {
+                        NaiveDate::from_ymd(
+                            x.name("year").unwrap().as_str().parse::<i32>().unwrap(),
+                            x.name("month").unwrap().as_str().parse::<u32>().unwrap(),
+                            x.name("day").unwrap().as_str().parse::<u32>().unwrap()
+                        )                        
+                    },
+                    None => {
+                        return Err(String::from(format!("Failed to parse independent column from datamart response: {}", independent)))
+                    }
+                }
+            };
+
+            for column in &config[&slug_id].sections[section] {
+                let value = { 
+                    match &entry[column] {
+                        Some(s) => { String::from(s) },
+                        None => { String::from("") }
+                    }
+                };
+                data.insert(String::from(column), value);
+            }
+
+            let push_target = section_data.entry(independent).or_insert(Vec::new());
+            push_target.push(data);
+        }
+    }
+
+    Ok(result)
 }
 
 fn lmxb463_text_parse(text: String) -> Result<USDADataPackage, String> {
@@ -247,10 +389,55 @@ fn lmxb463_text_parse(text: String) -> Result<USDADataPackage, String> {
     Ok(structure)
 }
 
+fn report_filter(entry: &DirEntry) -> bool {
+    let is_folder = entry.file_type().is_dir();
+    let file_name = entry.file_name().to_str().unwrap();
+    let lowercase_file_name = file_name.to_lowercase();
+    let file_ext = lowercase_file_name.split('.').last();
+
+    match file_ext {
+        Some(ext) => {
+            ext == "txt" || is_folder
+        },
+        None => {
+            false
+        },
+    }
+}
 
 fn main() {
-    let report = String::from(include_str!(r"C:\Users\Matt\Desktop\LM_XB463\ams_2643_00006.txt"));
-    let structure = lmxb463_text_parse(report);
+    let matches = command_usage().get_matches();
+    
+    let datamart_config: HashMap<String, DatamartConfig> = toml::from_str(&fs::read_to_string(matches.value_of("datamart-config").unwrap())
+                                                            .expect("Failed to read datamart config from filesystem"))
+                                                            .expect("Failed to parse datamart config TOML");
 
-    println!("{:#?}", structure)
+    let target_date = NaiveDate::from_ymd(2002, 11, 20);
+    let blarg = process_datamart(String::from("2659"), None, datamart_config).unwrap();
+
+    if matches.is_present("backfill") {
+        let target_path = matches.value_of("backfill").unwrap();
+        let mut file_queue = Vec::new();
+        for entry in WalkDir::new(target_path).into_iter().filter_entry(|e| report_filter(e)) {
+            match entry {
+                Ok(e) => {
+                    if e.file_type().is_file() {
+                        file_queue.push(String::from(e.path().to_str().unwrap()))
+                    } else {
+                        continue; // no message required for skipping folders
+                    }
+                },
+                Err(e) => {
+                    println!("Forced to skip entry: {}", e); // file system error?
+                    continue;
+                }
+            };  
+        }
+        
+        for path in file_queue {
+            let report = fs::read_to_string(path).unwrap();
+            let structure = lmxb463_text_parse(report);
+            println!("{:#?}", structure);
+        }
+    }
 }
