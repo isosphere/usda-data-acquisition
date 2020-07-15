@@ -2,28 +2,28 @@
 # currently possible AFAIK.
 
 [2478]
-name = "LM_CT151"
+name = "lm_ct151"
 description = "National Weekly Direct Slaughter Cattle Report - Formulated and Forward Contract"
 independent = "report_date"
     [2478.sections]
     Summary = ["purchase_type", "dressed_head_count", "live_head_count", "total_head_count"]
 
 [2466]
-name = "LM_CT100"
+name = "lm_ct100"
 description = "5 Area Daily Weighted Average Direct Slaughter Cattle - Negotiated"
 independent = "report_date"
     [2466.sections]
     Summary = ["previous_day_head_count"]
 
 [2659]
-name = "LM_CT109"
+name = "lm_ct109"
 description = "National Daily Direct Slaughter Cattle Report"
 independent = "report_date_end"
     [2659.sections]
     Summary = ["purchase_type_desc", "selling_basis_desc", "current_volume"]
 
 [2481]
-name = "LM_CT154"
+name = "lm_ct154"
 description = "National Weekly Direct Slaughter Cattle - Negotiated Purchases"
 independent = "report_date"
     [2481.sections]

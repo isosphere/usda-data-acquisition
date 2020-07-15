@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::fs;
+use std::sync::Arc;
 
 #[macro_use] 
 extern crate lazy_static;
@@ -9,7 +10,10 @@ extern crate ureq;
 
 use clap::{Arg, App};
 use chrono::{NaiveDate};
+use postgres::{Config, NoTls};
+use postgres::types::Type;
 use regex::{Regex};
+use rpassword::prompt_password_stdout;
 use serde_derive::Deserialize;
 use walkdir::{WalkDir, DirEntry};
 
@@ -17,19 +21,23 @@ const HTTP_CONNECT_TIMEOUT: u64 = 25000;
 const HTTP_RECEIVE_TIMEOUT: u64 = 25000;
 
 fn command_usage<'a, 'b>() -> App<'a, 'b> {
+    const DEFAULT_HOST: &str = "localhost";
+    const DEFAULT_PORT: &str = "5432";
+    const DEFAULT_USER: &str = "postgres";
+
     App::new("data-acquisition")
     .author("Matthew Scheffel <matt@dataheck.com>")
     .about("Scrapes data from the USDA")
     .arg(
         Arg::with_name("backfill-text")
-            .short("bt")
+            .short("t")
             .long("backfill-text")
             .takes_value(true)
             .help("Trigger parsing of all files in a given directory containing historical text files for non-datamart reports")
     )
     .arg(
         Arg::with_name("backfill-datamart")
-            .short("bd")
+            .short("m")
             .long("backfill-datamart")
             .takes_value(false)
             .help("Trigger total download of all known datamart reports")
@@ -41,6 +49,45 @@ fn command_usage<'a, 'b>() -> App<'a, 'b> {
             .help("Location of datamart scraping configuration")
             .default_value("config/datamart.toml")
     )
+    .arg(
+        Arg::with_name("create")
+            .short("c")
+            .long("create")
+            .takes_value(false)
+            .help("Create table structure required for insertion")
+    )
+    .arg(
+        Arg::with_name("host")
+            .short("h")
+            .long("host")
+            .takes_value(true)
+            .default_value(DEFAULT_HOST)
+            .help("The hostname of the PostgreSQL server to connect to.")
+    )
+    .arg(
+        Arg::with_name("database")
+            .short("b")
+            .long("database")
+            .takes_value(true)
+            .required(true)
+            .help("The database to USE on the PostgreSQL server.")
+    )
+    .arg(
+        Arg::with_name("port")
+            .short("p")
+            .long("port")
+            .takes_value(true)
+            .default_value(DEFAULT_PORT)
+            .help("The port to connect to the PostgreSQL server on.")
+    )
+    .arg(
+        Arg::with_name("user")
+            .short("u")
+            .long("user")
+            .takes_value(true)
+            .default_value(DEFAULT_USER)
+            .help("The user to connect to the PostgreSQL server with.")
+    )         
 }
 
 #[derive(Deserialize, Debug)]
@@ -81,6 +128,63 @@ impl USDADataPackage {
         }
     }
 }
+
+fn create_table(name:String, client: &mut postgres::Client) -> Result<usize, postgres::Error> {
+    client.batch_execute(&format!(r#"
+        CREATE TABLE {0} (
+            "timestamp" timestamp with time zone not null, 
+            variable_name text not null,
+            value numeric,
+            value_text text,
+            constraint {0}_timestamp_variable_name_pkey primary key ("timestamp", variable_name)
+        );
+    "#, &name))?;
+    Ok(0)
+}
+
+fn prepare_client(host: Arc<String>, port: Arc<u16>, user: Arc<String>, dbname: Arc<String>, password: Arc<String>) -> postgres::Client {
+    let client = Config::new()
+        .host(&host)
+        .port(*port)
+        .user(&user)
+        .dbname(&dbname)
+        .password(password.to_string())
+        .connect(NoTls).unwrap();
+
+    client
+}
+
+fn insert_package(package: USDADataPackage, client: &mut postgres::Client) -> Result<usize, postgres::Error> {
+    let report_name = package.name;
+
+    for (section, dates) in package.sections {
+        let table_name = String::from(format!("{}_{}", report_name, section));
+
+        // it would be nice to avoid recontructing these on subsequent calls, but we will probably only call once per report?
+        let statement = client.prepare_typed(&format!(r#"
+            INSERT INTO {table_name} ("timestamp", variable_name, value) VALUES(
+                TO_TIMESTAMP($1, 'YYYY-MM-DD'), $2, CAST($3 AS numeric)
+            ) ON CONFLICT ON CONSTRAINT {table_name}_timestamp_variable_name_pkey DO NOTHING
+            "#, table_name=&table_name),
+            &[Type::TEXT, Type::TEXT, Type::TEXT] 
+        ).unwrap();
+        
+        for (report_date, entries) in dates {
+            let sql_date = report_date.format("%Y-%m-%d").to_string();
+
+            for entry in entries {
+                for (key, value) in entry {
+                    let value = value.replace(",", "");
+                    if value.len() > 0 {
+                        client.execute(&statement, &[&sql_date, &key, &value]).unwrap();
+                    }
+                }
+            }
+        }
+    }
+    Ok(0)
+}
+
 
 fn find_line(text_array: &Vec<&str>, pattern:&Regex) -> Result<usize, String> {
     for line in 0 .. text_array.len() {
@@ -422,6 +526,38 @@ fn main() {
         .expect("Failed to read datamart config from filesystem"))
         .expect("Failed to parse datamart config TOML");
 
+    let postgresql_host = Arc::new(matches.value_of("host").unwrap().to_string());
+    let postgresql_user = Arc::new(matches.value_of("user").unwrap().to_string());
+    let postgresql_dbname = Arc::new(matches.value_of("database").unwrap().to_string());
+    let postgresql_port = Arc::new(matches.value_of("port").unwrap().parse::<u16>().expect(&format!("Invalid port specified: '{}.'", matches.value_of("port").unwrap())));
+    
+    println!("Connecting to PostgreSQL {}:{} as user '{}'.", postgresql_host, postgresql_port, postgresql_user);
+    let postgresql_pass = Arc::new(prompt_password_stdout("Password: ").unwrap());
+
+    let mut client = prepare_client(
+        postgresql_host, 
+        postgresql_port, 
+        postgresql_user, 
+        postgresql_dbname, 
+        postgresql_pass
+    );
+
+    if matches.is_present("create") {
+        println!("Creating tables.");
+
+        for section in vec!["summary", "quality", "sales_type", "destination", "delivery"] {
+            create_table(String::from(format!("lm_xb463_{}", section)), &mut client).unwrap();
+        }
+        
+        for slug in datamart_config.keys() {
+            let report_name = &datamart_config.get(slug).unwrap().name;
+
+            for section in datamart_config.get(slug).unwrap().sections.keys() {
+                create_table(String::from(format!("{}_{}", report_name, section)), &mut client).unwrap();
+            }
+        }
+    } 
+
     if matches.is_present("backfill-text") {
         let target_path = matches.value_of("backfill-text").unwrap();
         let mut file_queue = Vec::new();
@@ -447,7 +583,7 @@ fn main() {
 
             match result {
                 Ok(structure) => {
-                    println!("{:#?}", structure);
+                    insert_package(structure, &mut client).unwrap();
                 },
                 Err(_) => {
                     eprintln!("Failed to process file: {}", &path);
@@ -462,7 +598,7 @@ fn main() {
 
             match result {
                 Ok(structure) => {
-                    println!("{:#?}", structure);
+                    insert_package(structure, &mut client).unwrap();
                 },
                 Err(e) => {
                     eprintln!("Failed to process datamart reponse: {}", e);
