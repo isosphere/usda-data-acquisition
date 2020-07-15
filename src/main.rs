@@ -21,11 +21,18 @@ fn command_usage<'a, 'b>() -> App<'a, 'b> {
     .author("Matthew Scheffel <matt@dataheck.com>")
     .about("Scrapes data from the USDA")
     .arg(
-        Arg::with_name("backfill")
-            .short("b")
-            .long("backfill")
+        Arg::with_name("backfill-text")
+            .short("bt")
+            .long("backfill-text")
             .takes_value(true)
-            .help("A directory containing historical files")
+            .help("Trigger parsing of all files in a given directory containing historical text files for non-datamart reports")
+    )
+    .arg(
+        Arg::with_name("backfill-datamart")
+            .short("bd")
+            .long("backfill-datamart")
+            .takes_value(false)
+            .help("Trigger total download of all known datamart reports")
             .required(false)
     )
     .arg(
@@ -412,14 +419,11 @@ fn main() {
     let matches = command_usage().get_matches();
     
     let datamart_config: HashMap<String, DatamartConfig> = toml::from_str(&fs::read_to_string(matches.value_of("datamart-config").unwrap())
-                                                            .expect("Failed to read datamart config from filesystem"))
-                                                            .expect("Failed to parse datamart config TOML");
+        .expect("Failed to read datamart config from filesystem"))
+        .expect("Failed to parse datamart config TOML");
 
-    let target_date = NaiveDate::from_ymd(2002, 11, 20);
-    let blarg = process_datamart(String::from("2659"), None, datamart_config).unwrap();
-
-    if matches.is_present("backfill") {
-        let target_path = matches.value_of("backfill").unwrap();
+    if matches.is_present("backfill-text") {
+        let target_path = matches.value_of("backfill-text").unwrap();
         let mut file_queue = Vec::new();
         for entry in WalkDir::new(target_path).into_iter().filter_entry(|e| report_filter(e)) {
             match entry {
@@ -438,9 +442,32 @@ fn main() {
         }
         
         for path in file_queue {
-            let report = fs::read_to_string(path).unwrap();
-            let structure = lmxb463_text_parse(report);
-            println!("{:#?}", structure);
+            let report = fs::read_to_string(&path).unwrap();
+            let result = lmxb463_text_parse(report);
+
+            match result {
+                Ok(structure) => {
+                    println!("{:#?}", structure);
+                },
+                Err(_) => {
+                    eprintln!("Failed to process file: {}", &path);
+                }
+            }
+        }
+    }
+
+    if matches.is_present("backfill-datamart") {
+        for slug in datamart_config.keys() {
+            let result = process_datamart(String::from(slug), None, &datamart_config);
+
+            match result {
+                Ok(structure) => {
+                    println!("{:#?}", structure);
+                },
+                Err(e) => {
+                    eprintln!("Failed to process datamart reponse: {}", e);
+                }
+            }
         }
     }
 }
