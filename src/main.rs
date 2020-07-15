@@ -62,13 +62,15 @@ struct USDADataPackage {
                 HashMap<String, String> // variable name, value
             >
         >
-    >
+    >,
+    name: String
 }
 
 impl USDADataPackage {
-    fn new() -> USDADataPackage {
+    fn new(name: String) -> USDADataPackage {
         USDADataPackage {
-            sections: HashMap::new()
+            sections: HashMap::new(),
+            name: name
         }
     }
 }
@@ -83,12 +85,13 @@ fn find_line(text_array: &Vec<&str>, pattern:&Regex) -> Result<usize, String> {
     return Err(String::from("No match found"))
 }
 
-fn process_datamart(slug_id: String, report_date:Option<NaiveDate>, config: HashMap<String, DatamartConfig>) -> Result<USDADataPackage, String> {
+fn process_datamart(slug_id: String, report_date:Option<NaiveDate>, config: &HashMap<String, DatamartConfig>) -> Result<USDADataPackage, String> {
     if !config.contains_key(&slug_id) {
         return Err(String::from(format!("Slug ID {} is not known to our datamart configuration.", slug_id)));
     }
 
-    let mut result = USDADataPackage::new();
+    let report_label = &config.get(&slug_id).unwrap().name;
+    let mut result = USDADataPackage::new(String::from(report_label));
 
     for section in config[&slug_id].sections.keys() {
         let section_data = result.sections.entry(String::from(section)).or_insert(HashMap::new());
@@ -238,7 +241,7 @@ fn lmxb463_text_parse(text: String) -> Result<USDADataPackage, String> {
         }
     };
 
-    let mut structure = USDADataPackage::new();
+    let mut structure = USDADataPackage::new(String::from("LM_XB463"));
     let mut summary_data = HashMap::new();
     summary_data.insert(String::from("total_loads"), total_loads);
     
