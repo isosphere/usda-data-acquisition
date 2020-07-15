@@ -40,7 +40,7 @@ fn command_usage<'a, 'b>() -> App<'a, 'b> {
 struct DatamartConfig {
     name: String,                             // historical "slug name"
     description: String,
-    independent: String,                     // the independent variable, i.e.: primary key
+    independent: String,                      // the independent variable, i.e.: primary key
     sections: HashMap<String, Vec<String>>    // each section has a name and a list of columns to scrape
 }
 
