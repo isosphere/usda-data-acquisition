@@ -39,6 +39,6 @@ independent = "report_date"
         "weight_range_avg", "price_range_low", "price_range_high", "weighted_avg_price"
     ]
     Regional = [
-        "region", "selling_basis", "head_count", "dress_pct", "wgt_rng_low", "wgt_rng_high", "wgt_rng_avg",
-        "prc_rng_low", "prc_rng_high", "prc_rng_avg"        
+        "Region", "Selling_Basis", "Head_Count", "Dress_Pct", "Wgt_Rng_Low", "Wgt_Rng_High", "Wgt_Rng_Avg",
+        "Prc_Rng_Low", "Prc_Rng_High", "Prc_Rng_Avg"        
     ]

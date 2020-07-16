@@ -17,8 +17,8 @@ use rpassword::prompt_password_stdout;
 use serde_derive::Deserialize;
 use walkdir::{WalkDir, DirEntry};
 
-const HTTP_CONNECT_TIMEOUT: u64 = 25000;
-const HTTP_RECEIVE_TIMEOUT: u64 = 25000;
+const HTTP_CONNECT_TIMEOUT: u64 = 190000;
+const HTTP_RECEIVE_TIMEOUT: u64 = 190000; // datamart doesn't use compression, it's very slow
 
 fn command_usage<'a, 'b>() -> App<'a, 'b> {
     const DEFAULT_HOST: &str = "localhost";
@@ -87,7 +87,14 @@ fn command_usage<'a, 'b>() -> App<'a, 'b> {
             .takes_value(true)
             .default_value(DEFAULT_USER)
             .help("The user to connect to the PostgreSQL server with.")
-    )         
+    )       
+    .arg(
+        Arg::with_name("slug")
+            .short("s")
+            .long("slug")
+            .takes_value(true)
+            .help("A specific datamart report to fetch")
+    )               
 }
 
 #[derive(Deserialize, Debug)]
@@ -99,6 +106,7 @@ struct DatamartConfig {
 }
 
 #[derive(Deserialize, Debug)]
+#[allow(non_snake_case)] // I don't get to choose their JSON response
 struct DatamartResponse { 
     reportSection: String,
     reportSections: Vec<String>,
@@ -132,11 +140,11 @@ impl USDADataPackage {
 fn create_table(name:String, client: &mut postgres::Client) -> Result<usize, postgres::Error> {
     client.batch_execute(&format!(r#"
         CREATE TABLE {0} (
-            "timestamp" timestamp with time zone not null, 
+            report_date date not null, 
             variable_name text not null,
-            value numeric,
+            value real,
             value_text text,
-            constraint {0}_timestamp_variable_name_pkey primary key ("timestamp", variable_name)
+            constraint {0}_report_date_variable_name_pkey primary key (report_date, variable_name)
         );
     "#, &name))?;
     Ok(0)
@@ -161,22 +169,26 @@ fn insert_package(package: USDADataPackage, client: &mut postgres::Client) -> Re
         let table_name = String::from(format!("{}_{}", report_name, section));
 
         // it would be nice to avoid recontructing these on subsequent calls, but we will probably only call once per report?
-        let statement = client.prepare_typed(&format!(r#"
-            INSERT INTO {table_name} ("timestamp", variable_name, value) VALUES(
-                TO_TIMESTAMP($1, 'YYYY-MM-DD'), $2, CAST($3 AS numeric)
-            ) ON CONFLICT ON CONSTRAINT {table_name}_timestamp_variable_name_pkey DO NOTHING
+        let statement = client.prepare(&format!(r#"
+            INSERT INTO {table_name} (report_date, variable_name, value, value_text) VALUES(
+                $1, $2, $3, $4
+            ) ON CONFLICT ON CONSTRAINT {table_name}_report_date_variable_name_pkey DO NOTHING
             "#, table_name=&table_name),
-            &[Type::TEXT, Type::TEXT, Type::TEXT] 
+            //&[Type::DATE, Type::TEXT, Option::<Type::NUMERIC>, Type::TEXT]
         ).unwrap();
         
         for (report_date, entries) in dates {
-            let sql_date = report_date.format("%Y-%m-%d").to_string();
-
             for entry in entries {
                 for (key, value) in entry {
-                    let value = value.replace(",", "");
+                    let value_numeric = {
+                        let temp = value.replace(",", "");
+                        match temp.parse::<f32>() {
+                            Ok(v) => { Some(v) },
+                            Err(_) => { None }
+                        }
+                    };
                     if value.len() > 0 {
-                        client.execute(&statement, &[&sql_date, &key, &value]).unwrap();
+                        client.execute(&statement, &[&report_date, &key, &value_numeric, &value]).unwrap();
                     }
                 }
             }
@@ -227,8 +239,8 @@ fn process_datamart(slug_id: String, report_date:Option<NaiveDate>, config: &Has
 
         let response = ureq::get(&target_url).timeout_connect(HTTP_CONNECT_TIMEOUT).timeout_read(HTTP_RECEIVE_TIMEOUT).call();
         
-        if !response.ok() {
-            return Err(String::from(format!("Failed to retrieve data from datamart server with URL {}. Error: {}", target_url, response.into_string().unwrap())));
+        if let Some(error) = response.synthetic_error() {
+            return Err(String::from(format!("Failed to retrieve data from datamart server with URL {}. Error: {}", target_url, error)));
         }
 
         let parsed = {
@@ -605,5 +617,19 @@ fn main() {
                 }
             }
         }
+    } else if matches.is_present("slug") {
+        let slug = matches.value_of("slug").unwrap();
+        let result = process_datamart(String::from(slug), None, &datamart_config);
+
+        match result {
+            Ok(structure) => {
+                insert_package(structure, &mut client).unwrap();
+            },
+            Err(e) => {
+                eprintln!("Failed to process datamart reponse: {}", e);
+            }
+        }        
     }
+
+
 }

@@ -10,7 +10,7 @@ edition = "2018"
 clap = "2.33"
 chrono = "0.4"
 lazy_static = "1.4"
-postgres = "0.17"
+postgres = { version = "0.17", features = ["with-chrono-0_4"]}
 regex = "1"
 rpassword = "4.0"
 serde = "1.0"
