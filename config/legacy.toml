@@ -1,0 +1,21 @@
+[LM_XB463]
+name = "lm_xb463"
+description = "Comprehensive beef cutout"
+independent = "report_date"
+
+    [LM_XB463.sections]
+        [LM_XB463.sections.delivery]
+        independent = ["report_date"]
+        fields = []
+        [LM_XB463.sections.destination]
+        independent = ["report_date"]
+        fields = []
+        [LM_XB463.sections.quality]
+        independent = ["report_date"]
+        fields = []
+        [LM_XB463.sections.sales_type]
+        independent = ["report_date"]
+        fields = []
+        [LM_XB463.sections.summary]
+        independent = ["report_date"]
+        fields = []

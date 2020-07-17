@@ -1,44 +1,56 @@
 # Warning: field names are case sensitive. I would like to support case-insensitive matching but this is not 
 # currently possible AFAIK.
-
+# For debugging reference, the USDA date format is MM/DD/YYYY. Send ?q=independent=MM/DD/YYYY to get one day.
+# The first independent field is always interpreted as a date. all others will be interpreted as text.
 [2478]
 name = "lm_ct151"
 description = "National Weekly Direct Slaughter Cattle Report - Formulated and Forward Contract"
 independent = "report_date"
     [2478.sections]
-    Summary = ["purchase_type", "dressed_head_count", "live_head_count", "total_head_count"]
+        [2478.sections.Summary]
+        independent = ["report_date", "purchase_type"]
+        fields = ["dressed_head_count", "live_head_count", "total_head_count"]
 
 [2466]
 name = "lm_ct100"
 description = "5 Area Daily Weighted Average Direct Slaughter Cattle - Negotiated"
 independent = "report_date"
     [2466.sections]
-    Summary = ["previous_day_head_count"]
+        [2466.sections.Summary]
+        independent = ["report_date"]
+        fields = ["previous_day_head_count"]
 
 [2659]
 name = "lm_ct109"
 description = "National Daily Direct Slaughter Cattle Report"
 independent = "report_date_end"
     [2659.sections]
-    Summary = ["purchase_type_desc", "selling_basis_desc", "current_volume"]
+        [2659.sections.Summary]
+        independent = ["report_date_end", "purchase_type_desc", "selling_basis_desc"]
+        fields = ["current_volume"]
 
 [2481]
 name = "lm_ct154"
 description = "National Weekly Direct Slaughter Cattle - Negotiated Purchases"
 independent = "report_date"
     [2481.sections]
-    Summary = [
-        "total_head_count",         # total negotiated cash confirmed for the week
-        "total_head_count_1",       # total negotiated cash 1-14 day delivery for the week
-        "total_head_count_2",       # total negotiated cash 15-30 day delivery for the week
-        "total_head_count_neg_grid" # negotiated grid base confirmed for the week        
-    ]
-    Detail = [
-        "class_description", "source_description", "selling_basis_description", "purchase_type_code",
-        "grade_description", "head_count", "dress_pct", "weight_range_low", "weight_range_high",
-        "weight_range_avg", "price_range_low", "price_range_high", "weighted_avg_price"
-    ]
-    Regional = [
-        "Region", "Selling_Basis", "Head_Count", "Dress_Pct", "Wgt_Rng_Low", "Wgt_Rng_High", "Wgt_Rng_Avg",
-        "Prc_Rng_Low", "Prc_Rng_High", "Prc_Rng_Avg"        
-    ]
+        [2481.sections.Summary]
+        independent = ["report_date"]
+        fields = [
+            "total_head_count",         # total negotiated cash confirmed for the week
+            "total_head_count_1",       # total negotiated cash 1-14 day delivery for the week
+            "total_head_count_2",       # total negotiated cash 15-30 day delivery for the week
+            "total_head_count_neg_grid" # negotiated grid base confirmed for the week        
+        ]
+        [2481.sections.Detail]
+        independent = ["report_date", "class_description", "source_description", "selling_basis_description", "purchase_type_code", "grade_description"]
+        fields = [        
+            "head_count", "dress_pct", "weight_range_low", "weight_range_high",
+            "weight_range_avg", "price_range_low", "price_range_high", "weighted_avg_price"
+        ]
+        [2481.sections.Regional]
+        independent = ["report_date", "Region", "Selling_Basis",]
+        fields = [
+            "Head_Count", "Dress_Pct", "Wgt_Rng_Low", "Wgt_Rng_High", "Wgt_Rng_Avg",
+            "Prc_Rng_Low", "Prc_Rng_High", "Prc_Rng_Avg"        
+        ]

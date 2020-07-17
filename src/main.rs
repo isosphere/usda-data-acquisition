@@ -11,19 +11,18 @@ extern crate ureq;
 use clap::{Arg, App};
 use chrono::{NaiveDate};
 use postgres::{Config, NoTls};
-use postgres::types::Type;
+use postgres::types::ToSql;
 use regex::{Regex};
 use rpassword::prompt_password_stdout;
 use serde_derive::Deserialize;
 use walkdir::{WalkDir, DirEntry};
 
-const HTTP_CONNECT_TIMEOUT: u64 = 190000;
-const HTTP_RECEIVE_TIMEOUT: u64 = 190000; // datamart doesn't use compression, it's very slow
-
 fn command_usage<'a, 'b>() -> App<'a, 'b> {
     const DEFAULT_HOST: &str = "localhost";
     const DEFAULT_PORT: &str = "5432";
     const DEFAULT_USER: &str = "postgres";
+    const HTTP_CONNECT_TIMEOUT: &str = "190000";
+    const HTTP_RECEIVE_TIMEOUT: &str = "190000"; // datamart doesn't use compression, it's very slow
 
     App::new("data-acquisition")
     .author("Matthew Scheffel <matt@dataheck.com>")
@@ -49,6 +48,12 @@ fn command_usage<'a, 'b>() -> App<'a, 'b> {
             .help("Location of datamart scraping configuration")
             .default_value("config/datamart.toml")
     )
+    .arg(
+        Arg::with_name("legacy-config")
+            .takes_value(true)
+            .help("Location of legacy scraping configuration")
+            .default_value("config/legacy.toml")
+    )    
     .arg(
         Arg::with_name("create")
             .short("c")
@@ -94,59 +99,108 @@ fn command_usage<'a, 'b>() -> App<'a, 'b> {
             .long("slug")
             .takes_value(true)
             .help("A specific datamart report to fetch")
-    )               
+    )
+    .arg(
+        Arg::with_name("http-connect-timeout")
+            .long("http-connect-timeout")
+            .takes_value(true)
+            .default_value(HTTP_CONNECT_TIMEOUT)
+            .help("HTTP connection timeout. Note that datamart does not use compression and has large response sizes.")
+    )
+    .arg(
+        Arg::with_name("http-receive-timeout")
+            .long("http-receive-timeout")
+            .takes_value(true)
+            .default_value(HTTP_RECEIVE_TIMEOUT)
+            .help("HTTP receive timeout. Note that datamart does not use compression and has large response sizes.")
+    )     
+}
+
+#[derive(Deserialize, Debug)]
+struct DatamartSection {
+    independent: Vec<String>, // first is always interpreted as a NaiveDate, following are text.
+    fields: Vec<String>       // all will be attempted as numeric
 }
 
 #[derive(Deserialize, Debug)]
 struct DatamartConfig {
     name: String,                             // historical "slug name"
     description: String,
-    independent: String,                      // the independent variable, i.e.: primary key
-    sections: HashMap<String, Vec<String>>    // each section has a name and a list of columns to scrape
+    independent: String,                      // the independent variable, i.e.: date for query
+    sections: HashMap<String, DatamartSection> 
 }
 
 #[derive(Deserialize, Debug)]
-#[allow(non_snake_case)] // I don't get to choose their JSON response
-struct DatamartResponse { 
-    reportSection: String,
-    reportSections: Vec<String>,
+struct DatamartResponse {
+    #[serde(rename(deserialize = "reportSection"))]
+    report_section: String,
+    #[serde(rename(deserialize = "reportSections"))]
+    report_sections: Vec<String>,
     stats: HashMap<String, u32>,
     results: Vec<HashMap<String, Option<String>>>
 }
 
+// This structure represents a single "result" object from DatamartResponse.
+#[derive(Debug)]
+struct USDADataPackageSection {
+    report_date: NaiveDate,
+    independent: Vec<String>,
+    entries: HashMap<String, String>
+}
+
+impl USDADataPackageSection {
+    fn new(report_date: NaiveDate) -> USDADataPackageSection {
+        USDADataPackageSection {
+            report_date: report_date,
+            independent: Vec::new(),
+            entries: HashMap::new()
+        }
+    }
+}
+
 #[derive(Debug)]
 struct USDADataPackage {
+    name: String,
     sections: HashMap<
         String, // section name
-        HashMap<
-            NaiveDate, // report date
-            Vec<
-                HashMap<String, String> // variable name, value
-            >
-        >
+        Vec<USDADataPackageSection>
     >,
-    name: String
 }
 
 impl USDADataPackage {
     fn new(name: String) -> USDADataPackage {
         USDADataPackage {
+            name: name,
             sections: HashMap::new(),
-            name: name
         }
     }
 }
 
-fn create_table(name:String, client: &mut postgres::Client) -> Result<usize, postgres::Error> {
-    client.batch_execute(&format!(r#"
+fn create_table(name:String, independent: &Vec<String>, client: &mut postgres::Client) -> Result<usize, postgres::Error> {
+    // warning: this SQL construction is sensitive magic and prone to breaking
+    let mut sql = String::from(format!(r#"
         CREATE TABLE {0} (
-            report_date date not null, 
-            variable_name text not null,
-            value real,
-            value_text text,
-            constraint {0}_report_date_variable_name_pkey primary key (report_date, variable_name)
-        );
-    "#, &name))?;
+            report_date date not null,
+    "#, &name));
+
+    for column in &independent[1..] {
+        sql.push_str(&format!("\t\"{}\" text not null,", column));
+    }
+
+    sql.push_str(&format!(r#"
+        variable_name text not null,
+        value real,
+        value_text text,
+        constraint {0}_pkeys primary key (report_date,"#, &name));
+    
+    for column in &independent[1..] {
+        sql.push_str(&format!("\"{}\",", column));
+    }
+    sql.pop(); // remove trailing comma
+
+    sql.push_str(&"));");
+
+    client.batch_execute(&sql)?;
     Ok(0)
 }
 
@@ -162,34 +216,53 @@ fn prepare_client(host: Arc<String>, port: Arc<u16>, user: Arc<String>, dbname: 
     client
 }
 
-fn insert_package(package: USDADataPackage, client: &mut postgres::Client) -> Result<usize, postgres::Error> {
+fn insert_package(package: USDADataPackage, structure: &DatamartConfig, client: &mut postgres::Client) -> Result<usize, postgres::Error> {
     let report_name = package.name;
 
-    for (section, dates) in package.sections {
+    for (section, results) in package.sections {
+        // Dynamic statement preparation
+        // warning: this SQL construction is sensitive magic and prone to breaking
         let table_name = String::from(format!("{}_{}", report_name, section));
-
-        // it would be nice to avoid recontructing these on subsequent calls, but we will probably only call once per report?
-        let statement = client.prepare(&format!(r#"
-            INSERT INTO {table_name} (report_date, variable_name, value, value_text) VALUES(
-                $1, $2, $3, $4
-            ) ON CONFLICT ON CONSTRAINT {table_name}_report_date_variable_name_pkey DO NOTHING
-            "#, table_name=&table_name),
-            //&[Type::DATE, Type::TEXT, Option::<Type::NUMERIC>, Type::TEXT]
-        ).unwrap();
+        let independent = &structure.sections[&section].independent;
+        let mut sql = String::from(format!(r#"INSERT INTO {table_name} (report_date, "#, table_name=&table_name));
         
-        for (report_date, entries) in dates {
-            for entry in entries {
-                for (key, value) in entry {
-                    let value_numeric = {
-                        let temp = value.replace(",", "");
-                        match temp.parse::<f32>() {
-                            Ok(v) => { Some(v) },
-                            Err(_) => { None }
-                        }
-                    };
-                    if value.len() > 0 {
-                        client.execute(&statement, &[&report_date, &key, &value_numeric, &value]).unwrap();
+        for column in &independent[1..] {
+            sql.push_str(&format!("\"{}\", ", column));
+        }
+        sql.push_str("variable_name, value, value_text) VALUES(");
+        for i in 1..=independent.len()+3 {
+            sql.push_str(&format!("${},", i));
+        }
+        sql.pop();
+        sql.push_str(&format!(") ON CONFLICT ON CONSTRAINT {table_name}_pkeys DO NOTHING", table_name=table_name));
+        
+        let statement = client.prepare(&sql).unwrap();
+        
+        // Data processing and insertion
+        for usda_package in results {
+            let report_date = usda_package.report_date;
+            let independent = &usda_package.independent;
+
+            for (key, value) in usda_package.entries {
+                let value_numeric = {
+                    let temp = value.replace(",", "");
+                    match temp.parse::<f32>() {
+                        Ok(v) => { Some(v) },
+                        Err(_) => { None }
                     }
+                };
+                if value.len() > 0 {
+                    let mut params: Vec<&(dyn ToSql + Sync)> = Vec::new(); // this is some kind of magic that i do not yet understand
+                    
+                    params.push(&report_date);
+                    for column in &independent[1..] {
+                        params.push(column);
+                    }
+                    params.push(&key);
+                    params.push(&value_numeric);
+                    params.push(&value);
+
+                    client.execute(&statement, &params[..]).unwrap();
                 }
             }
         }
@@ -208,7 +281,7 @@ fn find_line(text_array: &Vec<&str>, pattern:&Regex) -> Result<usize, String> {
     return Err(String::from("No match found"))
 }
 
-fn process_datamart(slug_id: String, report_date:Option<NaiveDate>, config: &HashMap<String, DatamartConfig>) -> Result<USDADataPackage, String> {
+fn process_datamart(slug_id: String, report_date:Option<NaiveDate>, config: &HashMap<String, DatamartConfig>, http_connect_timeout:Arc<u64>, http_receive_timeout:Arc<u64>) -> Result<USDADataPackage, String> {
     if !config.contains_key(&slug_id) {
         return Err(String::from(format!("Slug ID {} is not known to our datamart configuration.", slug_id)));
     }
@@ -217,7 +290,7 @@ fn process_datamart(slug_id: String, report_date:Option<NaiveDate>, config: &Has
     let mut result = USDADataPackage::new(String::from(report_label));
 
     for section in config[&slug_id].sections.keys() {
-        let section_data = result.sections.entry(String::from(section)).or_insert(HashMap::new());
+        let section_data = result.sections.entry(String::from(section)).or_insert(Vec::new());
 
         let target_url = {
             let base_url = format!("https://mpr.datamart.ams.usda.gov/services/v1.1/reports/{}", slug_id);
@@ -237,7 +310,7 @@ fn process_datamart(slug_id: String, report_date:Option<NaiveDate>, config: &Has
             }
         };
 
-        let response = ureq::get(&target_url).timeout_connect(HTTP_CONNECT_TIMEOUT).timeout_read(HTTP_RECEIVE_TIMEOUT).call();
+        let response = ureq::get(&target_url).timeout_connect(*http_connect_timeout).timeout_read(*http_receive_timeout).call();
         
         if let Some(error) = response.synthetic_error() {
             return Err(String::from(format!("Failed to retrieve data from datamart server with URL {}. Error: {}", target_url, error)));
@@ -254,7 +327,6 @@ fn process_datamart(slug_id: String, report_date:Option<NaiveDate>, config: &Has
         };
 
         for entry in parsed.results {
-            let mut data = HashMap::new();
             let lookup = &config[&slug_id].independent;
             let independent = {
                 match entry[lookup].as_ref() {
@@ -286,18 +358,24 @@ fn process_datamart(slug_id: String, report_date:Option<NaiveDate>, config: &Has
                 }
             };
 
-            for column in &config[&slug_id].sections[section] {
+            let mut data = USDADataPackageSection::new(independent);
+
+            for column in &config[&slug_id].sections[section].fields {
                 let value = { 
                     match &entry[column] {
                         Some(s) => { String::from(s) },
                         None => { String::from("") }
                     }
                 };
-                data.insert(String::from(column), value);
+                data.entries.insert(String::from(column), value);
             }
 
-            let push_target = section_data.entry(independent).or_insert(Vec::new());
-            push_target.push(data);
+            for column in &config[&slug_id].sections[section].independent {
+                let value = entry.get(column).unwrap().as_ref().unwrap();
+                data.independent.push(String::from(value));
+            }
+
+            section_data.push(data);
         }
     }
 
@@ -365,8 +443,10 @@ fn lmxb463_text_parse(text: String) -> Result<USDADataPackage, String> {
     };
 
     let mut structure = USDADataPackage::new(String::from("LM_XB463"));
-    let mut summary_data = HashMap::new();
-    summary_data.insert(String::from("total_loads"), total_loads);
+    let mut summary_section = USDADataPackageSection::new(report_date);
+    summary_section.independent.push(report_date.format("%Y-%m-%d").to_string());
+    
+    summary_section.entries.insert(String::from("total_loads"), total_loads);
     
     // primal cutout values
     let location = {
@@ -386,7 +466,7 @@ fn lmxb463_text_parse(text: String) -> Result<USDADataPackage, String> {
                 for column in vec!["comprehensive", "prime", "branded", "choice", "select", "ungraded"] {
                     let label = x.name("label").unwrap().as_str().to_lowercase().trim().replace(" ", "_");
 
-                    summary_data.insert(
+                    summary_section.entries.insert(
                         format!("{}__{}", label, column),
                         String::from(x.name(column).unwrap().as_str())
                     );
@@ -396,11 +476,13 @@ fn lmxb463_text_parse(text: String) -> Result<USDADataPackage, String> {
         }
     }
 
-    let mut summary_report = HashMap::new();
-    summary_report.insert(report_date, vec![summary_data]);
-    structure.sections.insert(String::from("summary"), summary_report);    
+    let section = structure.sections.entry(String::from("summary")).or_insert(Vec::new());
+    section.push(summary_section);
 
     // quality breakdown   
+    let mut quality_section = USDADataPackageSection::new(report_date);
+    quality_section.independent.push(report_date.format("%Y-%m-%d").to_string());
+
     let location = {
         lazy_static! {
             static ref RE_LOCATION_QUALITY_A: Regex = Regex::new(r"^Quality breakdown:").unwrap();
@@ -419,17 +501,18 @@ fn lmxb463_text_parse(text: String) -> Result<USDADataPackage, String> {
         static ref RE_QUALITY_VALUE: Regex = Regex::new(r"(?i)(?P<label>[A-Z]+)\**\s+(?P<value>([0-9,]+))").unwrap();
     }
 
-    let mut quality_data = HashMap::new();
     for i in location..=location+4 {
         let quality = RE_QUALITY_VALUE.captures(text_array[i]).unwrap();
-        quality_data.insert(String::from(quality.name("label").unwrap().as_str()), String::from(quality.name("value").unwrap().as_str()));
+        quality_section.entries.insert(String::from(quality.name("label").unwrap().as_str()), String::from(quality.name("value").unwrap().as_str()));
     }
 
-    let mut quality_report = HashMap::new();
-    quality_report.insert(report_date, vec![quality_data]);
-    structure.sections.insert(String::from("quality"), quality_report);    
+    let section = structure.sections.entry(String::from("quality")).or_insert(Vec::new());
+    section.push(quality_section);
 
     // sales type
+    let mut sales_section = USDADataPackageSection::new(report_date);
+    sales_section.independent.push(report_date.format("%Y-%m-%d").to_string());
+
     let location = {
         lazy_static! {
             static ref RE_LOCATION_SALES: Regex = Regex::new(r"(?i)^((Sales type breakdown:)|(TYPE OF SALES))").unwrap();
@@ -442,15 +525,13 @@ fn lmxb463_text_parse(text: String) -> Result<USDADataPackage, String> {
         static ref RE_SALES_VALUE: Regex = Regex::new(r"(?i)(?P<label>(([A-Z0-9/\-]+)\s{0,2})+)\s+(?P<value>([0-9,]+))").unwrap();
     }
 
-    let mut sales_data = HashMap::new();
     for i in location..=location+3 {
         let sales = RE_SALES_VALUE.captures(text_array[i]).unwrap();
-        sales_data.insert(String::from(sales.name("label").unwrap().as_str().trim()), String::from(sales.name("value").unwrap().as_str()));
+        sales_section.entries.insert(String::from(sales.name("label").unwrap().as_str().trim()), String::from(sales.name("value").unwrap().as_str()));
     }
 
-    let mut sales_report = HashMap::new();
-    sales_report.insert(report_date, vec![sales_data]);
-    structure.sections.insert(String::from("sales_type"), sales_report);    
+    let section = structure.sections.entry(String::from("sales_type")).or_insert(Vec::new());
+    section.push(sales_section);
 
     // destination
     let location = {
@@ -464,20 +545,20 @@ fn lmxb463_text_parse(text: String) -> Result<USDADataPackage, String> {
         Ok(line) => {
             let line = line + 1;
 
+            let mut destination_section = USDADataPackageSection::new(report_date);
+            destination_section.independent.push(report_date.format("%Y-%m-%d").to_string());            
+
             lazy_static! {
                 static ref RE_DESTINATION_VALUE: Regex = Regex::new(r"(?i)(?P<label>(([A-Z]+)\s?)+)\s+(?P<value>([0-9,]+))").unwrap();
             }
 
-            let mut destination_data = HashMap::new();
-
             for i in line..=line+2 {
                 let result = RE_DESTINATION_VALUE.captures(text_array[i]).unwrap();
-                destination_data.insert(String::from(result.name("label").unwrap().as_str().trim()), String::from(result.name("value").unwrap().as_str()));
+                destination_section.entries.insert(String::from(result.name("label").unwrap().as_str().trim()), String::from(result.name("value").unwrap().as_str()));
             }
             
-            let mut destination_report = HashMap::new();
-            destination_report.insert(report_date, vec![destination_data]);
-            structure.sections.insert(String::from("destination"), destination_report);
+            let section = structure.sections.entry(String::from("destination")).or_insert(Vec::new());
+            section.push(destination_section);            
         },
         Err(_) => {}
     }
@@ -498,16 +579,16 @@ fn lmxb463_text_parse(text: String) -> Result<USDADataPackage, String> {
                 static ref RE_DELIVERY_VALUE: Regex = Regex::new(r"(?i)(?P<label>(([A-Z0-9-]+)\s?)+)\s+(?P<value>([0-9,]+))").unwrap();
             }
 
-            let mut delivery_data = HashMap::new();
+            let mut delivery_section = USDADataPackageSection::new(report_date);
+            delivery_section.independent.push(report_date.format("%Y-%m-%d").to_string());            
 
             for i in line..=line+3 {
                 let result = RE_DELIVERY_VALUE.captures(text_array[i]).unwrap();
-                delivery_data.insert(String::from(result.name("label").unwrap().as_str().trim()), String::from(result.name("value").unwrap().as_str()));
+                delivery_section.entries.insert(String::from(result.name("label").unwrap().as_str().trim()), String::from(result.name("value").unwrap().as_str()));
             }
 
-            let mut delivery_report = HashMap::new();
-            delivery_report.insert(report_date, vec![delivery_data]);
-            structure.sections.insert(String::from("delivery"), delivery_report);            
+            let section = structure.sections.entry(String::from("delivery")).or_insert(Vec::new());
+            section.push(delivery_section);        
         },
         Err(_) => {}
     }
@@ -538,10 +619,16 @@ fn main() {
         .expect("Failed to read datamart config from filesystem"))
         .expect("Failed to parse datamart config TOML");
 
+    let legacy_config: HashMap<String, DatamartConfig> = toml::from_str(&fs::read_to_string(matches.value_of("legacy-config").unwrap())
+        .expect("Failed to read legacy config from filesystem"))
+        .expect("Failed to parse legacy config TOML");
+
     let postgresql_host = Arc::new(matches.value_of("host").unwrap().to_string());
     let postgresql_user = Arc::new(matches.value_of("user").unwrap().to_string());
     let postgresql_dbname = Arc::new(matches.value_of("database").unwrap().to_string());
     let postgresql_port = Arc::new(matches.value_of("port").unwrap().parse::<u16>().expect(&format!("Invalid port specified: '{}.'", matches.value_of("port").unwrap())));
+    let http_connect_timeout = Arc::new(matches.value_of("http-connect-timeout").unwrap().parse::<u64>().expect(&format!("Invalid http connect timeout specified: {}", matches.value_of("http-connect-timeout").unwrap())));
+    let http_receive_timeout = Arc::new(matches.value_of("http-receive-timeout").unwrap().parse::<u64>().expect(&format!("Invalid http receive timeout specified: {}", matches.value_of("http-receive-timeout").unwrap())));
     
     println!("Connecting to PostgreSQL {}:{} as user '{}'.", postgresql_host, postgresql_port, postgresql_user);
     let postgresql_pass = Arc::new(prompt_password_stdout("Password: ").unwrap());
@@ -557,15 +644,17 @@ fn main() {
     if matches.is_present("create") {
         println!("Creating tables.");
 
+        let lmxb463_independent = vec![String::from("report_date")];
         for section in vec!["summary", "quality", "sales_type", "destination", "delivery"] {
-            create_table(String::from(format!("lm_xb463_{}", section)), &mut client).unwrap();
+            create_table(String::from(format!("lm_xb463_{}", section)), &lmxb463_independent, &mut client).unwrap();
         }
         
         for slug in datamart_config.keys() {
-            let report_name = &datamart_config.get(slug).unwrap().name;
+            let current_config = &datamart_config.get(slug).unwrap();
+            let report_name = &current_config.name;
 
-            for section in datamart_config.get(slug).unwrap().sections.keys() {
-                create_table(String::from(format!("{}_{}", report_name, section)), &mut client).unwrap();
+            for (section_name, section_data) in &datamart_config.get(slug).unwrap().sections {
+                create_table(String::from(format!("{}_{}", report_name, section_name)), &section_data.independent, &mut client).unwrap();
             }
         }
     } 
@@ -589,13 +678,15 @@ fn main() {
             };  
         }
         
+        // TODO: don't assume LM_XB463
         for path in file_queue {
             let report = fs::read_to_string(&path).unwrap();
-            let result = lmxb463_text_parse(report);
+            let current_config = legacy_config.get("LM_XB463").unwrap();
+            let result = lmxb463_text_parse(report);            
 
             match result {
                 Ok(structure) => {
-                    insert_package(structure, &mut client).unwrap();
+                    insert_package(structure, current_config, &mut client).unwrap();
                 },
                 Err(_) => {
                     eprintln!("Failed to process file: {}", &path);
@@ -606,11 +697,15 @@ fn main() {
 
     if matches.is_present("backfill-datamart") {
         for slug in datamart_config.keys() {
-            let result = process_datamart(String::from(slug), None, &datamart_config);
+            let http_connect_timeout = http_connect_timeout.clone();
+            let http_receive_timeout = http_receive_timeout.clone();
+
+            let result = process_datamart(String::from(slug), None, &datamart_config, http_connect_timeout, http_receive_timeout);
+            let current_config = datamart_config.get(slug).unwrap();
 
             match result {
                 Ok(structure) => {
-                    insert_package(structure, &mut client).unwrap();
+                    insert_package(structure, current_config, &mut client).unwrap();
                 },
                 Err(e) => {
                     eprintln!("Failed to process datamart reponse: {}", e);
@@ -619,11 +714,12 @@ fn main() {
         }
     } else if matches.is_present("slug") {
         let slug = matches.value_of("slug").unwrap();
-        let result = process_datamart(String::from(slug), None, &datamart_config);
+        let result = process_datamart(String::from(slug), None, &datamart_config, http_connect_timeout, http_receive_timeout);
+        let current_config = datamart_config.get(slug).unwrap();
 
         match result {
             Ok(structure) => {
-                insert_package(structure, &mut client).unwrap();
+                insert_package(structure, current_config, &mut client).unwrap();
             },
             Err(e) => {
                 eprintln!("Failed to process datamart reponse: {}", e);
