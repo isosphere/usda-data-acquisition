@@ -176,6 +176,18 @@ impl USDADataPackage {
     }
 }
 
+fn prepare_client(host: Arc<String>, port: Arc<u16>, user: Arc<String>, dbname: Arc<String>, password: Arc<String>) -> postgres::Client {
+    let client = Config::new()
+        .host(&host)
+        .port(*port)
+        .user(&user)
+        .dbname(&dbname)
+        .password(password.to_string())
+        .connect(NoTls).unwrap();
+
+    client
+}
+
 fn create_table(name:String, independent: &Vec<String>, client: &mut postgres::Client) -> Result<usize, postgres::Error> {
     // warning: this SQL construction is sensitive magic and prone to breaking
     let mut sql = String::from(format!(r#"
@@ -202,18 +214,6 @@ fn create_table(name:String, independent: &Vec<String>, client: &mut postgres::C
 
     client.batch_execute(&sql)?;
     Ok(0)
-}
-
-fn prepare_client(host: Arc<String>, port: Arc<u16>, user: Arc<String>, dbname: Arc<String>, password: Arc<String>) -> postgres::Client {
-    let client = Config::new()
-        .host(&host)
-        .port(*port)
-        .user(&user)
-        .dbname(&dbname)
-        .password(password.to_string())
-        .connect(NoTls).unwrap();
-
-    client
 }
 
 fn insert_package(package: USDADataPackage, structure: &DatamartConfig, client: &mut postgres::Client) -> Result<usize, postgres::Error> {
@@ -269,7 +269,6 @@ fn insert_package(package: USDADataPackage, structure: &DatamartConfig, client: 
     }
     Ok(0)
 }
-
 
 fn find_line(text_array: &Vec<&str>, pattern:&Regex) -> Result<usize, String> {
     for line in 0 .. text_array.len() {
@@ -682,7 +681,7 @@ fn main() {
         for path in file_queue {
             let report = fs::read_to_string(&path).unwrap();
             let current_config = legacy_config.get("LM_XB463").unwrap();
-            let result = lmxb463_text_parse(report);            
+            let result = lmxb463_text_parse(report);
 
             match result {
                 Ok(structure) => {
@@ -724,8 +723,6 @@ fn main() {
             Err(e) => {
                 eprintln!("Failed to process datamart reponse: {}", e);
             }
-        }        
+        }
     }
-
-
 }
