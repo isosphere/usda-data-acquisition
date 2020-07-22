@@ -9,7 +9,7 @@ extern crate serde;
 extern crate ureq;
 
 use clap::{Arg, App};
-use chrono::{NaiveDate};
+use chrono::{NaiveDate, Local};
 use postgres::{Config, NoTls};
 use postgres::types::ToSql;
 use regex::{Regex};
@@ -113,7 +113,12 @@ fn command_usage<'a, 'b>() -> App<'a, 'b> {
             .takes_value(true)
             .default_value(HTTP_RECEIVE_TIMEOUT)
             .help("HTTP receive timeout. Note that datamart does not use compression and has large response sizes.")
-    )     
+    )
+    .arg(
+        Arg::with_name("update")
+            .long("update")
+            .help("Checks latest date in database and attempts to synchronize with USDA servers from that date, per report.")
+    )
 }
 
 #[derive(Deserialize, Debug)]
@@ -280,7 +285,7 @@ fn find_line(text_array: &Vec<&str>, pattern:&Regex) -> Result<usize, String> {
     return Err(String::from("No match found"))
 }
 
-fn process_datamart(slug_id: String, report_date:Option<NaiveDate>, config: &HashMap<String, DatamartConfig>, http_connect_timeout:Arc<u64>, http_receive_timeout:Arc<u64>) -> Result<USDADataPackage, String> {
+fn process_datamart(slug_id: String, report_date:Option<NaiveDate>, config: &HashMap<String, DatamartConfig>, http_connect_timeout:Arc<u64>, http_receive_timeout:Arc<u64>, minimum_date:Option<NaiveDate>) -> Result<USDADataPackage, String> {
     if !config.contains_key(&slug_id) {
         return Err(String::from(format!("Slug ID {} is not known to our datamart configuration.", slug_id)));
     }
@@ -304,7 +309,21 @@ fn process_datamart(slug_id: String, report_date:Option<NaiveDate>, config: &Has
                     )
                 },
                 None => {
-                    format!("{base_url}/{section}", base_url=base_url, section=section)
+                    match minimum_date {
+                        Some(md) => {
+                            let today = Local::now().naive_local().date();
+
+                            format!(
+                                "{base_url}/{section}?q={independent}={minimum_date}:{today}", 
+                                base_url=base_url,
+                                section=section,
+                                independent=config[&slug_id].independent,
+                                today=today.format("%m/%d/%Y"),
+                                minimum_date=md.format("%m/%d/%Y")
+                            )
+                        },
+                        None => {format!("{base_url}/{section}", base_url=base_url, section=section)}
+                    }
                 }
             }
         };
@@ -699,7 +718,7 @@ fn main() {
             let http_connect_timeout = http_connect_timeout.clone();
             let http_receive_timeout = http_receive_timeout.clone();
 
-            let result = process_datamart(String::from(slug), None, &datamart_config, http_connect_timeout, http_receive_timeout);
+            let result = process_datamart(String::from(slug), None, &datamart_config, http_connect_timeout, http_receive_timeout, None);
             let current_config = datamart_config.get(slug).unwrap();
 
             match result {
@@ -713,7 +732,7 @@ fn main() {
         }
     } else if matches.is_present("slug") {
         let slug = matches.value_of("slug").unwrap();
-        let result = process_datamart(String::from(slug), None, &datamart_config, http_connect_timeout, http_receive_timeout);
+        let result = process_datamart(String::from(slug), None, &datamart_config, http_connect_timeout, http_receive_timeout, None);
         let current_config = datamart_config.get(slug).unwrap();
 
         match result {
@@ -722,6 +741,57 @@ fn main() {
             },
             Err(e) => {
                 eprintln!("Failed to process datamart reponse: {}", e);
+            }
+        }
+    } else if matches.is_present("update") {
+        for slug in datamart_config.keys() {
+            let http_connect_timeout = http_connect_timeout.clone();
+            let http_receive_timeout = http_receive_timeout.clone();
+            let current_config = datamart_config.get(slug).unwrap();
+
+            let maximum_existing_date = {
+                let mut max_date_found: Option<NaiveDate> = None;
+
+                for section in current_config.sections.keys() {
+                    let table_name = String::from(format!("{}_{}", current_config.name, section).to_lowercase());
+
+                    let sql = format!("SELECT MAX(report_date) FROM {}", table_name);
+                    let statement = client.prepare(&sql).unwrap();
+                    let row = client.query_one(&statement, &[]);
+                    match row {
+                        Ok(v) => { 
+                            let value = v.get(0);
+
+                            match max_date_found {
+                                Some(date) => {
+                                    if &date < &value {
+                                        max_date_found = Some(value);
+                                    }
+                                },
+                                None => {max_date_found = Some(value);}
+                            }
+                        },
+                        Err(_) => {
+                            panic!("Failed to obtain latest data for {}, aborting.", table_name);
+                        }
+                    }
+                }
+
+                max_date_found.unwrap()
+            };
+
+            println!("Current maximum date for {} is {}. Requesting new data.", current_config.name, maximum_existing_date);
+
+            let result = process_datamart(String::from(slug), None, &datamart_config, http_connect_timeout, http_receive_timeout, Some(maximum_existing_date));
+            let current_config = datamart_config.get(slug).unwrap();
+    
+            match result {
+                Ok(structure) => {
+                    insert_package(structure, current_config, &mut client).unwrap();
+                },
+                Err(e) => {
+                    eprintln!("Failed to process datamart reponse: {}", e);
+                }
             }
         }
     }
