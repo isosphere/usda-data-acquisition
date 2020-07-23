@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use chrono::{NaiveDate, Local};
-use regex::{Regex};
+use regex::Regex;
 use serde_derive::Deserialize; 
 
 use crate::common::{USDADataPackage, USDADataPackageSection};
