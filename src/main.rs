@@ -9,13 +9,18 @@ extern crate serde;
 extern crate ureq;
 
 use clap::{Arg, App};
-use chrono::{NaiveDate, Local};
+use chrono::NaiveDate;
 use postgres::{Config, NoTls};
 use postgres::types::ToSql;
 use regex::{Regex};
 use rpassword::prompt_password_stdout;
-use serde_derive::Deserialize;
 use walkdir::{WalkDir, DirEntry};
+
+mod datamart;
+use datamart::{DatamartConfig};
+
+mod common;
+use common::{USDADataPackage, USDADataPackageSection};
 
 fn command_usage<'a, 'b>() -> App<'a, 'b> {
     const DEFAULT_HOST: &str = "localhost";
@@ -121,66 +126,6 @@ fn command_usage<'a, 'b>() -> App<'a, 'b> {
     )
 }
 
-#[derive(Deserialize, Debug)]
-struct DatamartSection {
-    independent: Vec<String>, // first is always interpreted as a NaiveDate, following are text.
-    fields: Vec<String>       // all will be attempted as numeric
-}
-
-#[derive(Deserialize, Debug)]
-struct DatamartConfig {
-    name: String,                             // historical "slug name"
-    description: String,
-    independent: String,                      // the independent variable, i.e.: date for query
-    sections: HashMap<String, DatamartSection> 
-}
-
-#[derive(Deserialize, Debug)]
-struct DatamartResponse {
-    #[serde(rename(deserialize = "reportSection"))]
-    report_section: String,
-    #[serde(rename(deserialize = "reportSections"))]
-    report_sections: Vec<String>,
-    stats: HashMap<String, u32>,
-    results: Vec<HashMap<String, Option<String>>>
-}
-
-// This structure represents a single "result" object from DatamartResponse.
-#[derive(Debug)]
-struct USDADataPackageSection {
-    report_date: NaiveDate,
-    independent: Vec<String>,
-    entries: HashMap<String, String>
-}
-
-impl USDADataPackageSection {
-    fn new(report_date: NaiveDate) -> USDADataPackageSection {
-        USDADataPackageSection {
-            report_date: report_date,
-            independent: Vec::new(),
-            entries: HashMap::new()
-        }
-    }
-}
-
-#[derive(Debug)]
-struct USDADataPackage {
-    name: String,
-    sections: HashMap<
-        String, // section name
-        Vec<USDADataPackageSection>
-    >,
-}
-
-impl USDADataPackage {
-    fn new(name: String) -> USDADataPackage {
-        USDADataPackage {
-            name: name,
-            sections: HashMap::new(),
-        }
-    }
-}
-
 fn prepare_client(host: Arc<String>, port: Arc<u16>, user: Arc<String>, dbname: Arc<String>, password: Arc<String>) -> postgres::Client {
     let client = Config::new()
         .host(&host)
@@ -221,7 +166,7 @@ fn create_table(name:String, independent: &Vec<String>, client: &mut postgres::C
     Ok(0)
 }
 
-fn insert_package(package: USDADataPackage, structure: &DatamartConfig, client: &mut postgres::Client) -> Result<usize, postgres::Error> {
+fn insert_package(package: USDADataPackage, structure: &datamart::DatamartConfig, client: &mut postgres::Client) -> Result<usize, postgres::Error> {
     let report_name = package.name;
 
     for (section, results) in package.sections {
@@ -285,120 +230,6 @@ fn find_line(text_array: &Vec<&str>, pattern:&Regex) -> Result<usize, String> {
     return Err(String::from("No match found"))
 }
 
-fn process_datamart(slug_id: String, report_date:Option<NaiveDate>, config: &HashMap<String, DatamartConfig>, http_connect_timeout:Arc<u64>, http_receive_timeout:Arc<u64>, minimum_date:Option<NaiveDate>) -> Result<USDADataPackage, String> {
-    if !config.contains_key(&slug_id) {
-        return Err(String::from(format!("Slug ID {} is not known to our datamart configuration.", slug_id)));
-    }
-
-    let report_label = &config.get(&slug_id).unwrap().name;
-    let mut result = USDADataPackage::new(String::from(report_label));
-
-    for section in config[&slug_id].sections.keys() {
-        let section_data = result.sections.entry(String::from(section)).or_insert(Vec::new());
-
-        let target_url = {
-            let base_url = format!("https://mpr.datamart.ams.usda.gov/services/v1.1/reports/{}", slug_id);
-            match report_date {
-                Some(d) => {
-                    format!(
-                        "{base_url}/{section}?q={independent}={report_date}", 
-                        base_url=base_url,
-                        section=section,
-                        independent=config[&slug_id].independent,
-                        report_date=d.format("%m/%d/%Y")
-                    )
-                },
-                None => {
-                    match minimum_date {
-                        Some(md) => {
-                            let today = Local::now().naive_local().date();
-
-                            format!(
-                                "{base_url}/{section}?q={independent}={minimum_date}:{today}", 
-                                base_url=base_url,
-                                section=section,
-                                independent=config[&slug_id].independent,
-                                today=today.format("%m/%d/%Y"),
-                                minimum_date=md.format("%m/%d/%Y")
-                            )
-                        },
-                        None => {format!("{base_url}/{section}", base_url=base_url, section=section)}
-                    }
-                }
-            }
-        };
-
-        let response = ureq::get(&target_url).timeout_connect(*http_connect_timeout).timeout_read(*http_receive_timeout).call();
-        
-        if let Some(error) = response.synthetic_error() {
-            return Err(String::from(format!("Failed to retrieve data from datamart server with URL {}. Error: {}", target_url, error)));
-        }
-
-        let parsed = {
-            let result = response.into_json_deserialize::<DatamartResponse>();
-            match result {
-                Ok(j) => { j },
-                Err(_) => { 
-                    return Err(String::from(format!("Response from datamart server is not valid JSON, or the structure has changed significantly. Target url: {}", target_url)));
-                }
-            }
-        };
-
-        for entry in parsed.results {
-            let lookup = &config[&slug_id].independent;
-            let independent = {
-                match entry[lookup].as_ref() {
-                    Some(value) => { value },
-                    None => {
-                        // FYI: this actually happens. Values with no assigned date, floating around in the response.
-                        eprintln!("SLUGID={} Response contains entries with a null independent field, which is irrational. These entries will be skipped.", slug_id);
-                        continue;
-                    }
-                }
-            };
-
-            lazy_static!{
-                static ref RE_DATAMART_DATE_CAPTURE: Regex = Regex::new(r"(?P<month>\d+)/(?P<day>\d+)/(?P<year>\d+)").unwrap();
-            }
-
-            let independent = {
-                match RE_DATAMART_DATE_CAPTURE.captures(&independent) {
-                    Some(x) => {
-                        NaiveDate::from_ymd(
-                            x.name("year").unwrap().as_str().parse::<i32>().unwrap(),
-                            x.name("month").unwrap().as_str().parse::<u32>().unwrap(),
-                            x.name("day").unwrap().as_str().parse::<u32>().unwrap()
-                        )                        
-                    },
-                    None => {
-                        return Err(String::from(format!("Failed to parse independent column from datamart response: {}", independent)))
-                    }
-                }
-            };
-
-            let mut data = USDADataPackageSection::new(independent);
-
-            for column in &config[&slug_id].sections[section].fields {
-                let value = { 
-                    match &entry[column] {
-                        Some(s) => { String::from(s) },
-                        None => { String::from("") }
-                    }
-                };
-                data.entries.insert(String::from(column), value);
-            }
-
-            for column in &config[&slug_id].sections[section].independent {
-                let value = entry.get(column).unwrap().as_ref().unwrap();
-                data.independent.push(String::from(value));
-            }
-
-            section_data.push(data);
-        }
-    }
-
-    Ok(result)
-}
 
 fn lmxb463_text_parse(text: String) -> Result<USDADataPackage, String> {
     let text_array = text.split_terminator("\n").collect();
@@ -718,7 +549,7 @@ fn main() {
             let http_connect_timeout = http_connect_timeout.clone();
             let http_receive_timeout = http_receive_timeout.clone();
 
-            let result = process_datamart(String::from(slug), None, &datamart_config, http_connect_timeout, http_receive_timeout, None);
+            let result = datamart::process_datamart(String::from(slug), None, &datamart_config, http_connect_timeout, http_receive_timeout, None);
             let current_config = datamart_config.get(slug).unwrap();
 
             match result {
@@ -732,7 +563,7 @@ fn main() {
         }
     } else if matches.is_present("slug") {
         let slug = matches.value_of("slug").unwrap();
-        let result = process_datamart(String::from(slug), None, &datamart_config, http_connect_timeout, http_receive_timeout, None);
+        let result = datamart::process_datamart(String::from(slug), None, &datamart_config, http_connect_timeout, http_receive_timeout, None);
         let current_config = datamart_config.get(slug).unwrap();
 
         match result {
@@ -782,7 +613,7 @@ fn main() {
 
             println!("Current maximum date for {} is {}. Requesting new data.", current_config.name, maximum_existing_date);
 
-            let result = process_datamart(String::from(slug), None, &datamart_config, http_connect_timeout, http_receive_timeout, Some(maximum_existing_date));
+            let result = datamart::process_datamart(String::from(slug), None, &datamart_config, http_connect_timeout, http_receive_timeout, Some(maximum_existing_date));
             let current_config = datamart_config.get(slug).unwrap();
     
             match result {
