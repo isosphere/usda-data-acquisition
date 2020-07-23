@@ -277,7 +277,11 @@ fn main() {
                 if c.contains_key("postgres") && c["postgres"].contains_key("dbname") {
                     Arc::new(String::from(&c["postgres"]["dbname"]))
                 } else {
-                    Arc::new(matches.value_of("database").unwrap().to_string())
+                    if matches.is_present("database") {
+                        Arc::new(matches.value_of("database").unwrap().to_string())
+                    } else {
+                        panic!("Must specify postgres dbname either by command line argument or via secret config")
+                    }
                 }
             },
             None => {
