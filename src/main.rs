@@ -144,19 +144,22 @@ fn find_maximum_existing_date(current_config: &DatamartConfig, client: &mut post
 
         let sql = format!("SELECT MAX(report_date) FROM {}", table_name);
         let statement = client.prepare(&sql).unwrap();
+    
         let row = client.query_one(&statement, &[]);
 
         match row {
             Ok(v) => { 
-                let value = v.get(0);
+                let value: Option<NaiveDate> = v.get(0);
 
-                match max_date_found {
-                    Some(date) => {
+                match (max_date_found, value) {
+                    (Some(date), Some(value)) => {
                         if &date < &value {
                             max_date_found = Some(value);
                         }
                     },
-                    None => {max_date_found = Some(value);}
+                    (None, Some(value)) => {max_date_found = Some(value);},
+                    (Some(_), None) => {},
+                    (None, None) => {}
                 }
             },
             Err(_) => {
@@ -467,7 +470,17 @@ fn main() {
             let http_connect_timeout_inner = http_connect_timeout.clone();
             let http_receive_timeout_inner = http_receive_timeout.clone();            
 
-            let maximum_existing_date = find_maximum_existing_date(&current_config, &mut client).unwrap();
+            let maximum_existing_date = {
+                match find_maximum_existing_date(&current_config, &mut client) {
+                    Ok(v) => {
+                        v
+                    },
+                    Err(_) => {
+                        println!("No existing data found for {}, defaulting to a start date of 2008-01-01.", identifier);
+                        NaiveDate::from_ymd(2008, 1, 1)
+                    }
+                }
+            };
             let today = Local::now().naive_local().date();
 
             let releases = fetch_releases_by_identifier(&esmis_api_key, String::from(identifier), Some(maximum_existing_date), Some(today), http_connect_timeout, http_receive_timeout);
@@ -510,7 +523,17 @@ fn main() {
             let http_receive_timeout = http_receive_timeout.clone();
             let current_config = datamart_config.get(slug).unwrap();
 
-            let maximum_existing_date = find_maximum_existing_date(&current_config, &mut client).unwrap();
+            let maximum_existing_date = {
+                match find_maximum_existing_date(&current_config, &mut client) {
+                    Ok(v) => {
+                        v
+                    },
+                    Err(_) => {
+                        println!("No existing data found for {}, defaulting to a start date of 2008-01-01.", slug);
+                        NaiveDate::from_ymd(2008, 1, 1)
+                    }
+                }
+            };
 
             println!("Current maximum date for {} is {}. Requesting new data.", current_config.name, maximum_existing_date);
 
