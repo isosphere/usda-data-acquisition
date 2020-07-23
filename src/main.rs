@@ -422,6 +422,7 @@ fn main() {
             match result {
                 Ok(structure) => {
                     insert_package(structure, current_config, &mut client).unwrap();
+                    println!("{} processed and inserted.", path);
                 },
                 Err(_) => {
                     eprintln!("Failed to process file: {}", &path);
