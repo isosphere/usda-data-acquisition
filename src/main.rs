@@ -22,6 +22,9 @@ use common::USDADataPackage;
 mod datamart;
 use datamart::{DatamartConfig};
 
+mod esmis;
+use esmis::fetch_releases_by_identifier;
+
 mod legacy;
 
 fn command_usage<'a, 'b>() -> App<'a, 'b> {
@@ -60,7 +63,13 @@ fn command_usage<'a, 'b>() -> App<'a, 'b> {
             .takes_value(true)
             .help("Location of legacy scraping configuration")
             .default_value("config/legacy.toml")
-    )    
+    )
+    .arg(
+        Arg::with_name("secret-config")
+            .takes_value(true)
+            .help("Location of private configuration (passwords, api keys, etc.)")
+            .default_value("config/secret.toml")
+    ) 
     .arg(
         Arg::with_name("create")
             .short("c")
@@ -81,7 +90,6 @@ fn command_usage<'a, 'b>() -> App<'a, 'b> {
             .short("b")
             .long("database")
             .takes_value(true)
-            .required(true)
             .help("The database to USE on the PostgreSQL server.")
     )
     .arg(
@@ -248,16 +256,60 @@ fn main() {
     let legacy_config: HashMap<String, DatamartConfig> = toml::from_str(&fs::read_to_string(matches.value_of("legacy-config").unwrap())
         .expect("Failed to read legacy config from filesystem"))
         .expect("Failed to parse legacy config TOML");
+    
+    let secret_config: Option<HashMap<String, HashMap<String, String>>> = {
+        let secret_result = &fs::read_to_string(matches.value_of("secret-config").unwrap());
+        match secret_result {
+            Ok(s) => {
+                Some(toml::from_str(s).expect("Secret configuration exists yet failed to process as a TOML file."))
+            },
+            Err(_) => {
+                None
+            }
+        }
+    };
 
     let postgresql_host = Arc::new(matches.value_of("host").unwrap().to_string());
     let postgresql_user = Arc::new(matches.value_of("user").unwrap().to_string());
-    let postgresql_dbname = Arc::new(matches.value_of("database").unwrap().to_string());
+    let postgresql_dbname = { 
+        match secret_config.as_ref() {
+            Some(c) => {
+                if c.contains_key("postgres") && c["postgres"].contains_key("dbname") {
+                    Arc::new(String::from(&c["postgres"]["dbname"]))
+                } else {
+                    Arc::new(matches.value_of("database").unwrap().to_string())
+                }
+            },
+            None => {
+                if matches.is_present("database") {
+                    Arc::new(matches.value_of("database").unwrap().to_string())
+                } else {
+                    panic!("Must specify postgres dbname either by command line argument or via secret config")
+                }
+                
+            }
+        }
+    };
+
     let postgresql_port = Arc::new(matches.value_of("port").unwrap().parse::<u16>().expect(&format!("Invalid port specified: '{}.'", matches.value_of("port").unwrap())));
     let http_connect_timeout = Arc::new(matches.value_of("http-connect-timeout").unwrap().parse::<u64>().expect(&format!("Invalid http connect timeout specified: {}", matches.value_of("http-connect-timeout").unwrap())));
     let http_receive_timeout = Arc::new(matches.value_of("http-receive-timeout").unwrap().parse::<u64>().expect(&format!("Invalid http receive timeout specified: {}", matches.value_of("http-receive-timeout").unwrap())));
     
     println!("Connecting to PostgreSQL {}:{} as user '{}'.", postgresql_host, postgresql_port, postgresql_user);
-    let postgresql_pass = Arc::new(prompt_password_stdout("Password: ").unwrap());
+    let postgresql_pass = {
+        match secret_config.as_ref() {
+            Some(c) => {
+                if c.contains_key("postgres") && c["postgres"].contains_key("password") {
+                    Arc::new(String::from(&c["postgres"]["password"]))
+                } else {
+                    Arc::new(prompt_password_stdout("Password: ").unwrap())
+                }
+            },
+            None => {
+                Arc::new(prompt_password_stdout("Password: ").unwrap())
+            }
+        }        
+    };
 
     let mut client = prepare_client(
         postgresql_host, 

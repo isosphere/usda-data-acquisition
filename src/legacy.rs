@@ -1,4 +1,4 @@
-use crate::common::{USDADataPackage, USDADataPackageSection};
+use crate::common::{USDADataPackage, USDADataPackageSection}; // used to emulate datamart structure for easy integration
 
 use chrono::NaiveDate;
 use regex::Regex;

@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use chrono::NaiveDate;
+use serde_derive::Deserialize; 
 
 #[derive(Debug)]
 pub struct USDADataPackageSection {
