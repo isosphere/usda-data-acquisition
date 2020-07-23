@@ -198,7 +198,7 @@ fn create_table(name:String, independent: &Vec<String>, client: &mut postgres::C
         variable_name text not null,
         value real,
         value_text text,
-        constraint {0}_pkeys primary key (report_date,"#, &name));
+        constraint {0}_pkeys primary key (report_date, variable_name,"#, &name));
     
     for column in &independent[1..] {
         sql.push_str(&format!("\"{}\",", column));
