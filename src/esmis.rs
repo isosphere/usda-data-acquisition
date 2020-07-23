@@ -23,7 +23,7 @@ pub struct ESMISRelease {
 
 const API_ROOT: &str = "https://usda.library.cornell.edu/api/v1";
 
-pub fn fetch_releases_by_identifier(identifier:String, start_date: Option<NaiveDate>, end_date: Option<NaiveDate>, http_connect_timeout:Arc<u64>, http_receive_timeout:Arc<u64>) -> Result<Option<Vec<String>>, String> {
+pub fn fetch_releases_by_identifier(token:&String, identifier:String, start_date: Option<NaiveDate>, end_date: Option<NaiveDate>, http_connect_timeout:Arc<u64>, http_receive_timeout:Arc<u64>) -> Result<Option<Vec<String>>, String> {
     let target_url = {
         let base = format!("{}/release/findByIdentifier/{}", API_ROOT, identifier);
 
@@ -37,7 +37,9 @@ pub fn fetch_releases_by_identifier(identifier:String, start_date: Option<NaiveD
         }
     };
 
-    let response = ureq::get(&target_url).timeout_connect(*http_connect_timeout).timeout_read(*http_receive_timeout).call();
+    let response = ureq::get(&target_url)
+        .set("Authorization", &String::from(format!("Bearer {}", token)))
+        .timeout_connect(*http_connect_timeout).timeout_read(*http_receive_timeout).call();
 
     if let Some(error) = response.synthetic_error() {
         return Err(String::from(format!("Failed to retrieve data from datamart server with URL {}. Error: {}", target_url, error)));

@@ -9,7 +9,7 @@ extern crate serde;
 extern crate ureq;
 
 use clap::{Arg, App};
-use chrono::NaiveDate;
+use chrono::{Local, NaiveDate};
 use postgres::{Config, NoTls};
 use postgres::types::ToSql;
 
@@ -134,6 +134,41 @@ fn command_usage<'a, 'b>() -> App<'a, 'b> {
             .long("update")
             .help("Checks latest date in database and attempts to synchronize with USDA servers from that date, per report.")
     )
+}
+
+fn find_maximum_existing_date(current_config: &DatamartConfig, client: &mut postgres::Client) -> Result<NaiveDate, String> {
+    let mut max_date_found: Option<NaiveDate> = None;
+
+    for section in current_config.sections.keys() {
+        let table_name = String::from(format!("{}_{}", current_config.name, section).to_lowercase());
+
+        let sql = format!("SELECT MAX(report_date) FROM {}", table_name);
+        let statement = client.prepare(&sql).unwrap();
+        let row = client.query_one(&statement, &[]);
+
+        match row {
+            Ok(v) => { 
+                let value = v.get(0);
+
+                match max_date_found {
+                    Some(date) => {
+                        if &date < &value {
+                            max_date_found = Some(value);
+                        }
+                    },
+                    None => {max_date_found = Some(value);}
+                }
+            },
+            Err(_) => {
+                return Err(String::from(format!("Failed to obtain latest data for {}, aborting.", table_name)))
+            }
+        }
+    }
+
+    match max_date_found {
+        Some(d) => { Ok(d) },
+        None => { Err(String::from("No date found"))}
+    }
 }
 
 fn prepare_client(host: Arc<String>, port: Arc<u16>, user: Arc<String>, dbname: Arc<String>, password: Arc<String>) -> postgres::Client {
@@ -315,6 +350,21 @@ fn main() {
         }        
     };
 
+    let esmis_api_key = {
+        match secret_config.as_ref() {
+            Some(c) => {
+                if c.contains_key("esmis") && c["esmis"].contains_key("token") {
+                    String::from(&c["esmis"]["token"])
+                } else {
+                    prompt_password_stdout("ESMIS Token: ").unwrap()
+                }
+            },
+            None => {
+                prompt_password_stdout("ESMIS Token: ").unwrap()
+            }
+        }        
+    };
+
     let mut client = prepare_client(
         postgresql_host, 
         postgresql_port, 
@@ -408,41 +458,59 @@ fn main() {
             }
         }
     } else if matches.is_present("update") {
+        for identifier in vec!["LM_XB463",] {
+            let current_config = legacy_config.get(identifier).unwrap();
+            let http_connect_timeout = http_connect_timeout.clone();
+            let http_receive_timeout = http_receive_timeout.clone();
+
+            // I don't love this
+            let http_connect_timeout_inner = http_connect_timeout.clone();
+            let http_receive_timeout_inner = http_receive_timeout.clone();            
+
+            let maximum_existing_date = find_maximum_existing_date(&current_config, &mut client).unwrap();
+            let today = Local::now().naive_local().date();
+
+            let releases = fetch_releases_by_identifier(&esmis_api_key, String::from(identifier), Some(maximum_existing_date), Some(today), http_connect_timeout, http_receive_timeout);
+
+            match releases {
+                Ok(v) => {
+                    match v {
+                        Some(r) => {
+                            for release in r {
+                                println!("New release: {}", &release);
+                                let response = ureq::get(&release).timeout_connect(*http_connect_timeout_inner).timeout_read(*http_receive_timeout_inner).call();
+
+                                if let Some(error) = response.synthetic_error() {
+                                    return eprintln!("Failed to retrieve data from datamart server with URL {}. Error: {}", &release, error);
+                                } else {
+                                    let result = legacy::lmxb463_text_parse(response.into_string().unwrap());
+                                    match result {
+                                        Ok(structure) => {
+                                            insert_package(structure, current_config, &mut client).unwrap();
+                                        },
+                                        Err(_) => {
+                                            eprintln!("Failed to process file: {}", &release);
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        None => {
+                            println!("No new releases for {}.", identifier)
+                        }
+                    }
+                },
+                Err(e) => {eprintln!("Failed to find new releases for {}, error: {}", identifier, e)}
+            };
+        }
+        
+
         for slug in datamart_config.keys() {
             let http_connect_timeout = http_connect_timeout.clone();
             let http_receive_timeout = http_receive_timeout.clone();
             let current_config = datamart_config.get(slug).unwrap();
 
-            let maximum_existing_date = {
-                let mut max_date_found: Option<NaiveDate> = None;
-
-                for section in current_config.sections.keys() {
-                    let table_name = String::from(format!("{}_{}", current_config.name, section).to_lowercase());
-
-                    let sql = format!("SELECT MAX(report_date) FROM {}", table_name);
-                    let statement = client.prepare(&sql).unwrap();
-                    let row = client.query_one(&statement, &[]);
-                    match row {
-                        Ok(v) => { 
-                            let value = v.get(0);
-
-                            match max_date_found {
-                                Some(date) => {
-                                    if &date < &value {
-                                        max_date_found = Some(value);
-                                    }
-                                },
-                                None => {max_date_found = Some(value);}
-                            }
-                        },
-                        Err(_) => {
-                            panic!("Failed to obtain latest data for {}, aborting.", table_name);
-                        }
-                    }
-                }
-
-                max_date_found.unwrap()
-            };
+            let maximum_existing_date = find_maximum_existing_date(&current_config, &mut client).unwrap();
 
             println!("Current maximum date for {} is {}. Requesting new data.", current_config.name, maximum_existing_date);
 

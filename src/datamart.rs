@@ -97,7 +97,7 @@ pub fn process_datamart(slug_id: String, report_date:Option<NaiveDate>, config: 
                     Some(value) => { value },
                     None => {
                         // FYI: this actually happens. Values with no assigned date, floating around in the response.
-                        eprintln!("SLUGID={} Response contains entries with a null independent field, which is irrational. These entries will be skipped.", slug_id);
+                        eprintln!("slug={} Response contains entries with a null independent field, which is irrational. These entries will be skipped.", slug_id);
                         continue;
                     }
                 }
