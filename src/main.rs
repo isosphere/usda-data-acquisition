@@ -488,7 +488,7 @@ fn main() {
         }
     } else if matches.is_present("update") {
         for identifier in vec!["LM_XB463", "DC_GR110"] {
-            let current_config = legacy_config.get(identifier).unwrap();
+            let current_config = legacy_config.get(identifier).expect(&format!("Configuration for legacy report not found: {}", identifier));
             let http_connect_timeout = http_connect_timeout.clone();
             let http_receive_timeout = http_receive_timeout.clone();
 
@@ -507,7 +507,12 @@ fn main() {
                     }
                 }
             } + Duration::days(1);
+
             let today = Local::now().naive_local().date();
+
+            if maximum_existing_date > today {
+                continue;
+            }
 
             let releases = fetch_releases_by_identifier(&esmis_api_key, String::from(identifier), Some(maximum_existing_date), Some(today), http_connect_timeout, http_receive_timeout);
 
@@ -569,7 +574,11 @@ fn main() {
                         NaiveDate::from_ymd(2008, 1, 1)
                     }
                 }
-            };
+            } + Duration::days(1);
+
+            if maximum_existing_date > Local::now().naive_local().date() {
+                continue;
+            }
 
             println!("Current maximum date for {} is {}. Requesting new data.", current_config.name, maximum_existing_date);
 
