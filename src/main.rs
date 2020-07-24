@@ -9,7 +9,7 @@ extern crate serde;
 extern crate ureq;
 
 use clap::{Arg, App};
-use chrono::{Local, NaiveDate};
+use chrono::{Local, NaiveDate, Duration};
 use postgres::{Config, NoTls};
 use postgres::types::ToSql;
 
@@ -494,7 +494,7 @@ fn main() {
 
             // I don't love this
             let http_connect_timeout_inner = http_connect_timeout.clone();
-            let http_receive_timeout_inner = http_receive_timeout.clone();            
+            let http_receive_timeout_inner = http_receive_timeout.clone();
 
             let maximum_existing_date = {
                 match find_maximum_existing_date(&current_config, &mut client) {
@@ -506,7 +506,7 @@ fn main() {
                         NaiveDate::from_ymd(2008, 1, 1)
                     }
                 }
-            };
+            } + Duration::days(1);
             let today = Local::now().naive_local().date();
 
             let releases = fetch_releases_by_identifier(&esmis_api_key, String::from(identifier), Some(maximum_existing_date), Some(today), http_connect_timeout, http_receive_timeout);
