@@ -189,7 +189,7 @@ fn prepare_client(host: Arc<String>, port: Arc<u16>, user: Arc<String>, dbname: 
 fn create_table(name:String, independent: &Vec<String>, client: &mut postgres::Client) -> Result<usize, postgres::Error> {
     // warning: this SQL construction is sensitive magic and prone to breaking
     let mut sql = String::from(format!(r#"
-        CREATE TABLE {0} (
+        CREATE TABLE IF NOT EXISTS {0} (
             report_date date not null,
     "#, &name));
 
@@ -233,6 +233,8 @@ fn insert_package(package: USDADataPackage, structure: &datamart::DatamartConfig
         }
         sql.pop();
         sql.push_str(&format!(") ON CONFLICT ON CONSTRAINT {table_name}_pkeys DO NOTHING", table_name=table_name));
+
+        //println!("{}", sql);
         
         let statement = client.prepare(&sql).unwrap();
         
@@ -259,6 +261,8 @@ fn insert_package(package: USDADataPackage, structure: &datamart::DatamartConfig
                     params.push(&key);
                     params.push(&value_numeric);
                     params.push(&value);
+
+                    //println!("{:?}", params);
 
                     client.execute(&statement, &params[..]).unwrap();
                 }
@@ -379,9 +383,13 @@ fn main() {
     if matches.is_present("create") {
         println!("Creating tables.");
 
-        let lmxb463_independent = vec![String::from("report_date")];
-        for section in vec!["summary", "quality", "sales_type", "destination", "delivery"] {
-            create_table(String::from(format!("lm_xb463_{}", section)), &lmxb463_independent, &mut client).unwrap();
+        for slug in legacy_config.keys() {
+            let current_config = &legacy_config.get(slug).unwrap();
+            let report_name = &current_config.name;
+
+            for (section_name, section_data) in &legacy_config.get(slug).unwrap().sections {
+                create_table(String::from(format!("{}_{}", report_name, section_name)), &section_data.independent, &mut client).unwrap();
+            }        
         }
         
         for slug in datamart_config.keys() {
@@ -462,7 +470,7 @@ fn main() {
             }
         }
     } else if matches.is_present("update") {
-        for identifier in vec!["LM_XB463",] {
+        for identifier in vec!["LM_XB463", "DC_GR110"] {
             let current_config = legacy_config.get(identifier).unwrap();
             let http_connect_timeout = http_connect_timeout.clone();
             let http_receive_timeout = http_receive_timeout.clone();
@@ -497,13 +505,23 @@ fn main() {
                                 if let Some(error) = response.synthetic_error() {
                                     return eprintln!("Failed to retrieve data from datamart server with URL {}. Error: {}", &release, error);
                                 } else {
-                                    let result = legacy::lmxb463_text_parse(response.into_string().unwrap());
+                                    let result = { 
+                                        match identifier {
+                                            "LM_XB463" => {legacy::lmxb463_text_parse(response.into_string().unwrap())},
+                                            "DC_GR110" => {legacy::dcgr110_text_parse(response.into_string().unwrap())},
+                                            _ => {
+                                                eprintln!("Unknown report type encountered: {}", identifier);
+                                                continue;
+                                            }
+                                        }
+                                    };
+
                                     match result {
                                         Ok(structure) => {
                                             insert_package(structure, current_config, &mut client).unwrap();
                                         },
-                                        Err(_) => {
-                                            eprintln!("Failed to process file: {}", &release);
+                                        Err(e) => {
+                                            eprintln!("Failed to process file: {}, error: {}", &release, e);
                                         }
                                     }
                                 }

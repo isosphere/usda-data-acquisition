@@ -227,3 +227,101 @@ pub fn lmxb463_text_parse(text: String) -> Result<USDADataPackage, String> {
 
     Ok(structure)
 }
+
+pub fn dcgr110_text_parse(text: String) -> Result<USDADataPackage, String> {
+    let text_array = text.split_terminator("\n").collect();
+
+    let mut structure = USDADataPackage::new(String::from("DC_GR110"));  
+
+    let location: usize = {
+        lazy_static! {
+            static ref RE_DATE_LINE: Regex = Regex::new(r"^Dodge City,\s+KS").unwrap();
+        }
+        find_line(&text_array, &RE_DATE_LINE)?
+    };
+
+    let report_date = {
+        lazy_static! {
+            static ref RE_DATE_PARSE: Regex = Regex::new(r"(?i)(?P<month>[a-z]+)\s+(?P<day>\d+),\s+(?P<year>\d{4})").unwrap();
+        }
+
+        match RE_DATE_PARSE.captures(text_array[location]) {
+            Some(x) => {
+                let month_name = x.name("month").unwrap().as_str().to_lowercase();
+                let month = match month_name.as_ref() {
+                    "jan" => {1},  "feb" => {2},  "mar" => {3},
+                    "apr" => {4},  "may" => {5},  "jun" => {6},
+                    "jul" => {7},  "aug" => {8},  "sep" => {9},
+                    "oct" => {10}, "nov" => {11}, "dec" => {12},
+                    _ => return Err(String::from(format!("Invalid month name captured: {}",  month_name)))
+                };
+
+                NaiveDate::from_ymd(
+                    x.name("year").unwrap().as_str().parse::<i32>().unwrap(),
+                    month,
+                    x.name("day").unwrap().as_str().parse::<u32>().unwrap()
+                )
+            },
+            None => {
+                return Err(String::from("Failed to parse date line for report, aborting."));
+            }
+        }
+    };
+
+    let mut location: usize = {
+        lazy_static! {
+            static ref RE_WHEAT_LINE: Regex = Regex::new(r"HRW WHEAT ORD US NO 1").unwrap();
+        }
+        find_line(&text_array, &RE_WHEAT_LINE)?
+    } + 2;
+
+    lazy_static! {
+        static ref RE_PRICE_LINE: Regex = Regex::new(r"(?i)^(?P<region>(([a-z]+)\s?)+)\s+(?P<left_bid>\d+\.\d+)(?P<right_bid>\d+\.\d+)?").unwrap();
+    }
+
+    let mut section_order = vec!["soybeans", "sorghum", "corn", "wheat",];
+    let mut section = structure.sections.entry(section_order.pop().unwrap().to_string()).or_insert(Vec::new());
+
+    loop {
+        let result = RE_PRICE_LINE.captures(text_array[location]);
+
+        match result {
+            Some(r) => {
+                let right_price = r.name("right_bid");
+                let left_price = r.name("left_bid").unwrap().as_str().parse::<f32>().unwrap();
+
+                let insert_price = {
+                    match right_price {
+                        Some(v) => {
+                            (v.as_str().parse::<f32>().unwrap() + left_price) / 2.0
+                        },
+                        None => { left_price }
+                    }
+                };
+
+                section.push(USDADataPackageSection::new(report_date));
+                
+                let current_object = section.last_mut().unwrap();
+                current_object.independent.push(report_date.format("%Y-%m-%d").to_string());
+                current_object.independent.push(String::from(r.name("region").unwrap().as_str().trim()));
+                current_object.entries.insert(String::from("bid"), format!("{}", insert_price));
+            },
+            None => {
+                if section_order.len() == 0 {
+                    break;
+                } else {
+                    section = structure.sections.entry(section_order.pop().unwrap().to_string()).or_insert(Vec::new());
+                    location += 2;
+                }
+            }
+        }
+        
+        location += 1;
+
+        if location == text_array.len() && section_order.len() > 0 {
+            return Err(String::from(format!("Failed to parse report, hit end of report early. Missed sections: {:?}", section_order)))
+        }
+    }
+
+    Ok(structure)
+}

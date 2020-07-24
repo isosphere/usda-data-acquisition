@@ -19,3 +19,22 @@ independent = "report_date"
         [LM_XB463.sections.summary]
         independent = ["report_date"]
         fields = []
+
+[DC_GR110]
+name = "dc_gr110"
+description = "Western Kansas Grain Markets Closing Elevator Bids"
+independent = "report_date"
+
+    [DC_GR110.sections]
+        [DC_GR110.sections.wheat]
+        independent = ["report_date", "region"]
+        fields = ["bid"]
+        [DC_GR110.sections.corn]
+        independent = ["report_date", "region"]
+        fields = ["bid"]
+        [DC_GR110.sections.sorghum]
+        independent = ["report_date", "region"]
+        fields = ["bid"]
+        [DC_GR110.sections.soybeans]
+        independent = ["report_date", "region"]
+        fields = ["bid"]        
