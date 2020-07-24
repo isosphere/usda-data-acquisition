@@ -10,7 +10,7 @@ fn find_line(text_array: &Vec<&str>, pattern:&Regex) -> Result<usize, String> {
         }
     }
 
-    return Err(String::from("No match found"))
+    return Err(String::from(format!("No match found for pattern: {}", pattern)))
 }
 
 

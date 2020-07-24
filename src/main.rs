@@ -404,12 +404,46 @@ fn main() {
 
     if matches.is_present("backfill-text") {
         let target_path = matches.value_of("backfill-text").unwrap();
-        let mut file_queue = Vec::new();
+
         for entry in WalkDir::new(target_path).into_iter().filter_entry(|e| report_filter(e)) {
-            match entry {
+            match entry.as_ref() {
                 Ok(e) => {
                     if e.file_type().is_file() {
-                        file_queue.push(String::from(e.path().to_str().unwrap()))
+                        let mut ancestors = e.path().ancestors();
+                        let identifier = e.path().parent().unwrap().strip_prefix(ancestors.nth(2).unwrap()).unwrap().to_str().unwrap().to_uppercase();
+                        let current_config = legacy_config.get(&String::from(&identifier)).expect(&format!("Unknown report: {}", &identifier));
+                        let path = e.path().to_str().unwrap();
+
+                        let report = {
+                            match fs::read_to_string(&path) {
+                                Ok(s) => {s},
+                                Err(e) => {
+                                    eprintln!("Unable to read file as text: {}, {}", path, e);
+                                    continue;
+                                }
+                            }
+                        };
+                        
+                        let result = { 
+                            match identifier.as_ref() {
+                                "LM_XB463" => {legacy::lmxb463_text_parse(report)},
+                                "DC_GR110" => {legacy::dcgr110_text_parse(report)},
+                                _ => {
+                                    eprintln!("Unknown report type encountered: {}", identifier);
+                                    continue;
+                                }
+                            }
+                        };
+        
+                        match result {
+                            Ok(structure) => {
+                                insert_package(structure, current_config, &mut client).unwrap();
+                                println!("{} processed and inserted.", &path);
+                            },
+                            Err(e) => {
+                                eprintln!("Failed to process file: {}, error: {}", &path, e);
+                            }
+                        }
                     } else {
                         continue; // no message required for skipping folders
                     }
@@ -419,23 +453,6 @@ fn main() {
                     continue;
                 }
             };  
-        }
-        
-        // TODO: don't assume LM_XB463
-        for path in file_queue {
-            let report = fs::read_to_string(&path).unwrap();
-            let current_config = legacy_config.get("LM_XB463").unwrap();
-            let result = legacy::lmxb463_text_parse(report);
-
-            match result {
-                Ok(structure) => {
-                    insert_package(structure, current_config, &mut client).unwrap();
-                    println!("{} processed and inserted.", path);
-                },
-                Err(_) => {
-                    eprintln!("Failed to process file: {}", &path);
-                }
-            }
         }
     }
 
