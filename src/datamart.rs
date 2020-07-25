@@ -28,7 +28,8 @@ pub struct DatamartResponse {
     #[serde(rename(deserialize = "reportSections"))]
     report_sections: Vec<String>,
     stats: HashMap<String, u32>,
-    results: Vec<HashMap<String, Option<String>>>
+    results: Option<Vec<HashMap<String, Option<String>>>>,
+    message: Option<String>
 }    
 
 pub fn process_datamart(slug_id: String, report_date:Option<NaiveDate>, config: &HashMap<String, DatamartConfig>, http_connect_timeout:Arc<u64>, http_receive_timeout:Arc<u64>, minimum_date:Option<NaiveDate>) -> Result<USDADataPackage, String> {
@@ -90,56 +91,70 @@ pub fn process_datamart(slug_id: String, report_date:Option<NaiveDate>, config: 
             }
         };
 
-        for entry in parsed.results {
-            let lookup = &config[&slug_id].independent;
-            let independent = {
-                match entry[lookup].as_ref() {
-                    Some(value) => { value },
-                    None => {
-                        // FYI: this actually happens. Values with no assigned date, floating around in the response.
-                        eprintln!("slug={} Response contains entries with a null independent field, which is irrational. These entries will be skipped.", slug_id);
-                        continue;
+        match parsed.message {
+            Some(message) => {
+                println!("Message from datamart: {}", message)
+            }
+            None => {}
+        }
+
+        match parsed.results {
+            Some(results) => {
+                for entry in results {
+                    let lookup = &config[&slug_id].independent;
+                    let independent = {
+                        match entry[lookup].as_ref() {
+                            Some(value) => { value },
+                            None => {
+                                // FYI: this actually happens. Values with no assigned date, floating around in the response.
+                                eprintln!("slug={} Response contains entries with a null independent field, which is irrational. These entries will be skipped.", slug_id);
+                                continue;
+                            }
+                        }
+                    };
+
+                    lazy_static!{
+                        static ref RE_DATAMART_DATE_CAPTURE: Regex = Regex::new(r"(?P<month>\d+)/(?P<day>\d+)/(?P<year>\d+)").unwrap();
                     }
+
+                    let independent = {
+                        match RE_DATAMART_DATE_CAPTURE.captures(&independent) {
+                            Some(x) => {
+                                NaiveDate::from_ymd(
+                                    x.name("year").unwrap().as_str().parse::<i32>().unwrap(),
+                                    x.name("month").unwrap().as_str().parse::<u32>().unwrap(),
+                                    x.name("day").unwrap().as_str().parse::<u32>().unwrap()
+                                )                        
+                            },
+                            None => {
+                                return Err(String::from(format!("Failed to parse independent column from datamart response: {}", independent)))
+                            }
+                        }
+                    };
+
+                    let mut data = USDADataPackageSection::new(independent);
+
+                    for column in &config[&slug_id].sections[section].fields {
+                        let value = { 
+                            match &entry[column] {
+                                Some(s) => { String::from(s) },
+                                None => { String::from("") }
+                            }
+                        };
+                        data.entries.insert(String::from(column), value);
+                    }
+
+                    for column in &config[&slug_id].sections[section].independent {
+                        let value = entry.get(column).unwrap().as_ref().unwrap();
+                        data.independent.push(String::from(value));
+                    }
+
+                    section_data.push(data);
                 }
-            };
-
-            lazy_static!{
-                static ref RE_DATAMART_DATE_CAPTURE: Regex = Regex::new(r"(?P<month>\d+)/(?P<day>\d+)/(?P<year>\d+)").unwrap();
+            },
+            None => {
+                return Err(String::from("No results found."))
             }
-
-            let independent = {
-                match RE_DATAMART_DATE_CAPTURE.captures(&independent) {
-                    Some(x) => {
-                        NaiveDate::from_ymd(
-                            x.name("year").unwrap().as_str().parse::<i32>().unwrap(),
-                            x.name("month").unwrap().as_str().parse::<u32>().unwrap(),
-                            x.name("day").unwrap().as_str().parse::<u32>().unwrap()
-                        )                        
-                    },
-                    None => {
-                        return Err(String::from(format!("Failed to parse independent column from datamart response: {}", independent)))
-                    }
-                }
-            };
-
-            let mut data = USDADataPackageSection::new(independent);
-
-            for column in &config[&slug_id].sections[section].fields {
-                let value = { 
-                    match &entry[column] {
-                        Some(s) => { String::from(s) },
-                        None => { String::from("") }
-                    }
-                };
-                data.entries.insert(String::from(column), value);
-            }
-
-            for column in &config[&slug_id].sections[section].independent {
-                let value = entry.get(column).unwrap().as_ref().unwrap();
-                data.independent.push(String::from(value));
-            }
-
-            section_data.push(data);
         }
     }
 
