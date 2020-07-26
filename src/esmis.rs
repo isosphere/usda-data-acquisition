@@ -3,7 +3,7 @@
 use std::sync::Arc;
 use chrono::NaiveDate;
 
-use serde_derive::Deserialize; 
+use serde::Deserialize; 
 
 #[derive(Deserialize, Debug)]
 pub struct ESMISRelease {
