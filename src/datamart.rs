@@ -37,10 +37,12 @@ pub struct DatamartResponse {
 /// that datamart is working and ready for more serious queries, so that we can avoid our
 /// long timeout.
 pub fn check_datamart() -> Result<(), String> {
+    const QUICK_DATAMART_TIMEOUT: u64 = 3000;
+
     // this is the fastest query I can find
     let target_url = "https://mpr.datamart.ams.usda.gov/services/v1.1/reports/2451/?q=report_date=01/01/2020".to_owned();
     
-    let response = ureq::get(&target_url).timeout_connect(3).timeout_read(3).call();
+    let response = ureq::get(&target_url).timeout_connect(QUICK_DATAMART_TIMEOUT).timeout_read(QUICK_DATAMART_TIMEOUT).call();
         
     if let Some(error) = response.synthetic_error() {
         return Err(format!("Failed to retrieve data from datamart server with URL {}. Error: {}", target_url, error));
