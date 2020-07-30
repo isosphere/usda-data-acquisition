@@ -270,7 +270,7 @@ pub fn process_noaa<R: Read>(cursor: R, element_filter: Option<String>) -> Resul
             Err(_) => {return Err(String::from("Failed to read file in archive from NOAA"))}
         };
 
-        println!("{:?}", file.path());
+        let path_name = file.path().unwrap().into_owned().to_str().unwrap_or("Unknown").to_string();
 
         let file_size: usize = match file.header().size() {
             Ok(s) => {
@@ -289,7 +289,7 @@ pub fn process_noaa<R: Read>(cursor: R, element_filter: Option<String>) -> Resul
         let mut buffer = Vec::with_capacity(file_size);
         match file.read_to_end(&mut buffer) {
             Ok(_) => {},
-            Err(e) => {return Err(format!("Failed to read file in archive into memory: {}", e))}
+            Err(e) => {return Err(format!("Failed to read file in archive into memory: {}, {}", path_name, e))}
         }
 
         let mut reader = Reader::from_bytes(buffer).width(269).linebreak(LineBreak::Newline);
@@ -311,7 +311,7 @@ pub fn process_noaa<R: Read>(cursor: R, element_filter: Option<String>) -> Resul
                     }
                 },
                 Err(e) => {
-                    println!("error: {}", e)
+                    println!("error for {}: {}", path_name, e)
                 }
             }
         }
