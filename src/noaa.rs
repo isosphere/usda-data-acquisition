@@ -1,6 +1,7 @@
 extern crate ftp;
 
 use std::fmt;
+use std::fmt::{Display, Formatter};
 use std::io::{Read, Cursor};
 use std::convert::TryInto;
 use std::result;
@@ -38,6 +39,7 @@ pub enum MeasurementFlag {
     TraceOfPrecipitation, // or snow fall, or snow depth
     ConvertedFromWBANCode,
 }
+
 impl<'de> Deserialize<'de> for MeasurementFlag {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
         where D: Deserializer<'de> {
@@ -56,6 +58,22 @@ impl<'de> Deserialize<'de> for MeasurementFlag {
                 q => {Err(D::Error::custom(format!("Unknown measurement flag: {}", q)))}
             }
         }
+}
+
+impl Display for MeasurementFlag {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        match self {
+            MeasurementFlag::PrecipitationTotalFromTwoTwelveHourTotals => {write!(f, "PrecipitationTotalFromTwoTwelveHourTotals")},
+            MeasurementFlag::PrecipitationTotalFromFourSixHourTotals => {write!(f, "PrecipitationTotalFromFourSixHourTotals")},
+            MeasurementFlag::HourlyPoint => {write!(f, "HourlyPoint")},
+            MeasurementFlag::ConvertedFromKnots => {write!(f, "ConvertedFromKnots")},
+            MeasurementFlag::TemperatureLaggedFromObservation => {write!(f, "TemperatureLaggedFromObservation")},
+            MeasurementFlag::ConvertedFromOktas => {write!(f, "ConvertedFromOktas")},
+            MeasurementFlag::MissingPresumedZero => {write!(f, "MissingPresumedZero")},
+            MeasurementFlag::TraceOfPrecipitation => {write!(f, "TraceOfPrecipitation")},
+            MeasurementFlag::ConvertedFromWBANCode => {write!(f, "ConvertedFromWBANCode")},
+        }
+    }
 }
 
 
@@ -100,6 +118,27 @@ impl<'de> Deserialize<'de> for QualityFlag {
                 q => {Err(D::Error::custom(format!("Unknown quality flag: {}", q)))}
             }
         }
+}
+
+impl Display for QualityFlag {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        match self {
+            QualityFlag::Duplicate => {write!(f, "Duplicate")},
+            QualityFlag::Gap => {write!(f, "Gap")},
+            QualityFlag::InternalConsistency => {write!(f, "InternalConsistency")},
+            QualityFlag::StreakFrequent => {write!(f, "StreakFrequent")},
+            QualityFlag::Length => {write!(f, "Length")},
+            QualityFlag::Megaconsistency => {write!(f, "Megaconsistency")},
+            QualityFlag::Naught => {write!(f, "Naught")},
+            QualityFlag::ClimatologicalOutlier => {write!(f, "ClimatologicalOutlier")},
+            QualityFlag::LaggedRange => {write!(f, "LaggedRange")},
+            QualityFlag::SpatialConsistency => {write!(f, "SpatialConsistency")},
+            QualityFlag::TemporalConsistency => {write!(f, "TemporalConsistency")},
+            QualityFlag::TooWarmForSnow => {write!(f, "TooWarmForSnow")},
+            QualityFlag::FailedBoundsCheck => {write!(f, "FailedBoundsCheck")},
+            QualityFlag::FlaggedDatzilla => {write!(f, "FlaggedDatzilla")},
+        }
+    }
 }
 
 fn value_process<'de, D>(deserializer: D) -> Result<Option<isize>, D::Error> 
