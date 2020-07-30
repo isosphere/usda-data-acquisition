@@ -76,6 +76,12 @@ impl From<Vec<noaa::Observation>> for USDADataPackage {
                 continue;
             }
             for (day, data) in observation.observations.iter().enumerate() {
+                // if the value is empty, don't bother with this record
+                let value_string = match data.value.as_ref() {
+                    Some(v) => { v.to_string() },
+                    None => { continue }
+                };
+
                 let this_date = NaiveDate::from_ymd(
                     observation.year.try_into().unwrap(),
                     observation.month.try_into().unwrap(),
@@ -102,7 +108,7 @@ impl From<Vec<noaa::Observation>> for USDADataPackage {
                 };
 
                 destination_section.entries.insert(
-                    "measure_flag".to_owned(),
+                    "quality_flag".to_owned(),
                     quality_string
                 );
 
@@ -110,11 +116,6 @@ impl From<Vec<noaa::Observation>> for USDADataPackage {
                     "source_flag".to_owned(),
                     data.source_flag.to_owned()
                 );
-
-                let value_string = match data.value.as_ref() {
-                    Some(v) => { v.to_string() },
-                    None => { "".to_owned() }
-                };
 
                 destination_section.entries.insert(
                     "value".to_owned(),
@@ -128,6 +129,43 @@ impl From<Vec<noaa::Observation>> for USDADataPackage {
 
         output_package
     }
+}
+
+#[test]
+fn test_from_noaa() {
+    use tar::{Builder, Header};
+    use flate2::write::GzEncoder;
+    use flate2::Compression;
+    use std::io::prelude::*;
+    use std::io::Cursor;
+
+    // note: this data is made up so that we see a variety in the response, so don't worry about weird flags
+    let test_string = r#"AE000041196194403TAVG-9999   -9999   -9999   -9999   -9999   -9999   -9999   -9999   -9999   -9999   -9999   -9999   -9999   -9999   -9999   -9999   -9999   -9999   -9999     292H S  274H S  242H S  250H S  263H S  257H S  233H S  239H S  217H S  245H S  292H S  260H S
+AE000041196194404TMAX  258  I  263  I  258  I  263  I  296  I  302  I  358  I  391  I  380  I  308  I  291  I  274  I  280  I  369  I  330 KI  335B I  385  I  385  I  374  I  374  I  313  I  308  I  308  I  302  I  313  I  330  I  335  I  302  I  313  I  346  I-9999   
+AE000041196194404TMIN  180  I  180  I  163  I  146  I  135  I-9999   -9999     196  I  235  I  213  I  163  I-9999     180  I  174  I-9999     196  I  241  I  235  I  208  I  196  I  208  I  213  I  180  I  174  I  180  I  180  I  169  I  152  I  169  I  169  I-9999   
+"#;
+
+    let cursor = Cursor::new(test_string);
+    
+    let mut header = Header::new_gnu();
+    header.set_path("foo.dly").unwrap();
+    header.set_size(test_string.len().try_into().unwrap());
+    header.set_cksum();
+    
+    let mut archive = Builder::new(Vec::new());
+    archive.append(&header, cursor).unwrap();
+    let archive = archive.into_inner().unwrap();
+
+    let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+    encoder.write_all(&archive[..]).unwrap();
+
+    let result = encoder.finish().unwrap();
+    let cursor = Cursor::new(result);
+
+    let results = noaa::process_noaa(cursor, None).unwrap();
+    let converted_result = USDADataPackage::from(results);
+
+    println!("{:#?}", converted_result)
 }
 
 /// A translation of the NOAA structure for the data-acquistion project
@@ -150,4 +188,9 @@ pub fn noaa_structure() -> datamart::DatamartConfig {
         independent: "report_date".to_owned(),
         sections
     }
+}
+
+#[test]
+fn test_noaa_structure() {
+    println!("{:?}", noaa_structure())
 }

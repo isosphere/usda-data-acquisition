@@ -327,8 +327,9 @@ fn test_process_noaa() {
     use flate2::Compression;
     use std::io::prelude::*;
 
+    // note: this data is made up so that we see a variety in the response, so don't worry about weird flags
     let test_string = r#"AE000041196194403TAVG-9999   -9999   -9999   -9999   -9999   -9999   -9999   -9999   -9999   -9999   -9999   -9999   -9999   -9999   -9999   -9999   -9999   -9999   -9999     292H S  274H S  242H S  250H S  263H S  257H S  233H S  239H S  217H S  245H S  292H S  260H S
-AE000041196194404TMAX  258  I  263  I  258  I  263  I  296  I  302  I  358  I  391  I  380  I  308  I  291  I  274  I  280  I  369  I  330  I  335  I  385  I  385  I  374  I  374  I  313  I  308  I  308  I  302  I  313  I  330  I  335  I  302  I  313  I  346  I-9999   
+AE000041196194404TMAX  258  I  263  I  258  I  263  I  296  I  302  I  358  I  391  I  380  I  308  I  291  I  274  I  280  I  369  I  330 KI  335B I  385  I  385  I  374  I  374  I  313  I  308  I  308  I  302  I  313  I  330  I  335  I  302  I  313  I  346  I-9999   
 AE000041196194404TMIN  180  I  180  I  163  I  146  I  135  I-9999   -9999     196  I  235  I  213  I  163  I-9999     180  I  174  I-9999     196  I  241  I  235  I  208  I  196  I  208  I  213  I  180  I  174  I  180  I  180  I  169  I  152  I  169  I  169  I-9999   
 "#;
 
@@ -352,5 +353,5 @@ AE000041196194404TMIN  180  I  180  I  163  I  146  I  135  I-9999   -9999     1
     let results = process_noaa(cursor, Some("TAVG".to_string())).unwrap();
     for observation in results {
         println!("{}", observation);
-    }    
+    }
 }
