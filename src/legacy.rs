@@ -3,25 +3,53 @@ use crate::common::{USDADataPackage, USDADataPackageSection}; // used to emulate
 use chrono::NaiveDate;
 use regex::Regex;
 
-fn find_line(text_array: &Vec<&str>, pattern:&Regex) -> Result<usize, String> {
-    for line in 0 .. text_array.len() {
-        if pattern.is_match(text_array[line]) {
-            return Ok(line)
+/// Finds the zero-indexed line number that matches a regex pattern.
+/// If your regex is trivial, consider using the faster `find_line_contains`
+fn find_line_regex(text_array: &[&str], pattern:&Regex) -> Option<usize> {
+    for (number, line) in text_array.iter().enumerate() {
+        if pattern.is_match(line) {
+            return Some(number)
         }
     }
 
-    return Err(String::from(format!("No match found for pattern: {}", pattern)))
+    None
 }
 
+/// Finds the zero-indexed line number that contains a string.
+/// For more advanced finding, consider using the slower `find_line_regex`
+fn find_line_contains(text_array: &[&str], pattern:&str) -> Option<usize> {
+    for (number, line) in text_array.iter().enumerate() {
+        if line.contains(pattern) {
+            return Some(number)
+        }
+    }
+
+    None
+}
+
+/// Finds the zero-indexed line number that starts with a string.
+/// For more advanced finding, consider using the slower `find_line_regex`
+/// For basic finding that isn't anchored to the start of a line, consider `find_line_contains`
+fn find_line_starts_with(text_array: &[&str], pattern:&str) -> Option<usize> {
+    for (number, line) in text_array.iter().enumerate() {
+        if line.starts_with(pattern) {
+            return Some(number)
+        }
+    }
+
+    None
+}
 
 pub fn lmxb463_text_parse(text: String) -> Result<USDADataPackage, String> {
-    let text_array = text.split_terminator("\n").collect();
+    let text_array: Vec<&str> = text.split_terminator('\n').collect();
 
     let location: usize = {
-        lazy_static! {
-            static ref RE_DATE_LINE: Regex = Regex::new("^For Week Ending:").unwrap();
+        match find_line_starts_with(&text_array, "For Week Ending:") {
+            Some(line) => { line },
+            None => {
+                return Err("Failed to find date line".to_owned());
+            }
         }
-        find_line(&text_array, &RE_DATE_LINE)?
     };
 
     let report_date = {
@@ -38,23 +66,23 @@ pub fn lmxb463_text_parse(text: String) -> Result<USDADataPackage, String> {
                 )
             },
             None => {
-                return Err(String::from("Failed to parse date line for report, aborting."));
+                return Err("Failed to parse date line for report, aborting.".to_owned());
             }
         }
     };
 
     let location = {
-        lazy_static! {
-            static ref RE_TOTAL_LOADS_A: Regex = Regex::new(r"^TOTAL LOADS OF PRODUCT REPORTED").unwrap();
-            static ref RE_TOTAL_LOADS_B: Regex = Regex::new(r"^TOTAL LOADS").unwrap(); // different report version. prefer not to use as default.
-        }
-        
-        match find_line(&text_array, &RE_TOTAL_LOADS_A) {
-            Ok(line) => {
+        match find_line_starts_with(&text_array, "TOTAL LOADS OF PRODUCT REPORTED") {
+            Some(line) => {
                 line
             },
-            Err(_) => {
-                find_line(&text_array, &RE_TOTAL_LOADS_B)?
+            None => {
+                match find_line_starts_with(&text_array, "TOTAL LOADS") {
+                    Some(line) => {line},
+                    None => {
+                        return Err("Failed to find total load count location.".to_owned());
+                    }
+                }
             }
         }
     };
@@ -69,24 +97,25 @@ pub fn lmxb463_text_parse(text: String) -> Result<USDADataPackage, String> {
                 String::from(&x[0])
             },
             None => {
-                return Err(String::from("Failed to capture total loads for report, aborting."));
+                return Err("Failed to capture total loads for report, aborting.".to_owned());
             }
         }
     };
 
-    let mut structure = USDADataPackage::new(String::from("LM_XB463"));
+    let mut structure = USDADataPackage::new("LM_XB463".to_owned());
     let mut summary_section = USDADataPackageSection::new(report_date);
     summary_section.independent.push(report_date.format("%Y-%m-%d").to_string());
     
-    summary_section.entries.insert(String::from("total_loads"), total_loads);
+    summary_section.entries.insert("total_loads".to_owned(), total_loads);
     
     // primal cutout values
     let location = {
-        lazy_static! {
-            static ref RE_LOCATION_CUTOUT: Regex = Regex::new(r"^Weekly Cutout Value").unwrap();
+        match find_line_starts_with(&text_array, "Weekly Cutout Value") {
+            Some(line) => {line},
+            None => {
+                return Err("Failed to locate cutout value line".to_owned());
+            }
         }
-
-        find_line(&text_array, &RE_LOCATION_CUTOUT)?
     };
 
     lazy_static! {
@@ -95,12 +124,12 @@ pub fn lmxb463_text_parse(text: String) -> Result<USDADataPackage, String> {
     for i in location..=location+8 {
         match RE_PRIMAL_VALUE.captures(text_array[i]) {
             Some(x) => {
-                for column in vec!["comprehensive", "prime", "branded", "choice", "select", "ungraded"] {
+                for column in &["comprehensive", "prime", "branded", "choice", "select", "ungraded"] {
                     let label = x.name("label").unwrap().as_str().to_lowercase().trim().replace(" ", "_");
 
                     summary_section.entries.insert(
                         format!("{}__{}", label, column),
-                        String::from(x.name(column).unwrap().as_str())
+                        x.name(column).unwrap().as_str().to_owned()
                     );
                 }
             },
@@ -108,7 +137,7 @@ pub fn lmxb463_text_parse(text: String) -> Result<USDADataPackage, String> {
         }
     }
 
-    let section = structure.sections.entry(String::from("summary")).or_insert(Vec::new());
+    let section = structure.sections.entry("summary".to_owned()).or_insert_with(Vec::new);
     section.push(summary_section);
 
     // quality breakdown   
@@ -116,15 +145,16 @@ pub fn lmxb463_text_parse(text: String) -> Result<USDADataPackage, String> {
     quality_section.independent.push(report_date.format("%Y-%m-%d").to_string());
 
     let location = {
-        lazy_static! {
-            static ref RE_LOCATION_QUALITY_A: Regex = Regex::new(r"^Quality breakdown:").unwrap();
-            static ref RE_LOCATION_QUALITY_B: Regex = Regex::new(r"^TOTAL LOADS").unwrap(); // different report version
-        }
-
-        match find_line(&text_array, &RE_LOCATION_QUALITY_A) {
-            Ok(line) => { line },
-            Err(_) => {
-                find_line(&text_array, &RE_LOCATION_QUALITY_B)?
+        match find_line_starts_with(&text_array, "Quality breakdown:") {
+            Some(line) => { line },
+            None => {
+                // different report version
+                match find_line_starts_with(&text_array, "TOTAL LOADS") {
+                    Some(line) => { line },
+                    None => {
+                        return Err("Failed to locate quality section location".to_owned());
+                    }
+                }
             }
         }
     } + 1;
@@ -135,10 +165,10 @@ pub fn lmxb463_text_parse(text: String) -> Result<USDADataPackage, String> {
 
     for i in location..=location+4 {
         let quality = RE_QUALITY_VALUE.captures(text_array[i]).unwrap();
-        quality_section.entries.insert(String::from(quality.name("label").unwrap().as_str()), String::from(quality.name("value").unwrap().as_str()));
+        quality_section.entries.insert(quality.name("label").unwrap().as_str().to_owned(), quality.name("value").unwrap().as_str().to_owned());
     }
 
-    let section = structure.sections.entry(String::from("quality")).or_insert(Vec::new());
+    let section = structure.sections.entry("quality".to_owned()).or_insert_with(Vec::new);
     section.push(quality_section);
 
     // sales type
@@ -150,7 +180,12 @@ pub fn lmxb463_text_parse(text: String) -> Result<USDADataPackage, String> {
             static ref RE_LOCATION_SALES: Regex = Regex::new(r"(?i)^((Sales type breakdown:)|(TYPE OF SALES))").unwrap();
         }
 
-        find_line(&text_array, &RE_LOCATION_SALES)?
+        match find_line_regex(&text_array, &RE_LOCATION_SALES) {
+            Some(line) => { line },
+            None => {
+                return Err("Failed to locate sales section".to_owned());
+            }
+        }
     } + 1;
 
     lazy_static! {
@@ -159,10 +194,10 @@ pub fn lmxb463_text_parse(text: String) -> Result<USDADataPackage, String> {
 
     for i in location..=location+3 {
         let sales = RE_SALES_VALUE.captures(text_array[i]).unwrap();
-        sales_section.entries.insert(String::from(sales.name("label").unwrap().as_str().trim()), String::from(sales.name("value").unwrap().as_str()));
+        sales_section.entries.insert(sales.name("label").unwrap().as_str().trim().to_owned(), sales.name("value").unwrap().as_str().to_owned());
     }
 
-    let section = structure.sections.entry(String::from("sales_type")).or_insert(Vec::new());
+    let section = structure.sections.entry("sales_type".to_owned()).or_insert_with(Vec::new);
     section.push(sales_section);
 
     // destination
@@ -170,11 +205,11 @@ pub fn lmxb463_text_parse(text: String) -> Result<USDADataPackage, String> {
         lazy_static! {
             static ref RE_LOCATION_DESTINATION: Regex = Regex::new(r"(?i)^Destination breakdown:").unwrap();
         }
-        find_line(&text_array, &RE_LOCATION_DESTINATION)
+        find_line_regex(&text_array, &RE_LOCATION_DESTINATION)
     };
 
     match location {
-        Ok(line) => {
+        Some(line) => {
             let line = line + 1;
 
             let mut destination_section = USDADataPackageSection::new(report_date);
@@ -186,13 +221,13 @@ pub fn lmxb463_text_parse(text: String) -> Result<USDADataPackage, String> {
 
             for i in line..=line+2 {
                 let result = RE_DESTINATION_VALUE.captures(text_array[i]).unwrap();
-                destination_section.entries.insert(String::from(result.name("label").unwrap().as_str().trim()), String::from(result.name("value").unwrap().as_str()));
+                destination_section.entries.insert(result.name("label").unwrap().as_str().trim().to_owned(), result.name("value").unwrap().as_str().to_owned());
             }
             
-            let section = structure.sections.entry(String::from("destination")).or_insert(Vec::new());
-            section.push(destination_section);            
+            let section = structure.sections.entry("destination".to_owned()).or_insert(Vec::new());
+            section.push(destination_section);
         },
-        Err(_) => {}
+        None => {}
     }
 
     // delivery period
@@ -200,11 +235,11 @@ pub fn lmxb463_text_parse(text: String) -> Result<USDADataPackage, String> {
         lazy_static! {
             static ref RE_LOCATION_DELIVERY: Regex = Regex::new(r"(?i)^Delivery period breakdown:").unwrap();
         }
-        find_line(&text_array, &RE_LOCATION_DELIVERY)
+        find_line_regex(&text_array, &RE_LOCATION_DELIVERY)
     };
 
     match location {
-        Ok(line) => {
+        Some(line) => {
             let line = line + 1;
 
             lazy_static! {
@@ -212,32 +247,34 @@ pub fn lmxb463_text_parse(text: String) -> Result<USDADataPackage, String> {
             }
 
             let mut delivery_section = USDADataPackageSection::new(report_date);
-            delivery_section.independent.push(report_date.format("%Y-%m-%d").to_string());            
+            delivery_section.independent.push(report_date.format("%Y-%m-%d").to_string());
 
             for i in line..=line+3 {
                 let result = RE_DELIVERY_VALUE.captures(text_array[i]).unwrap();
-                delivery_section.entries.insert(String::from(result.name("label").unwrap().as_str().trim()), String::from(result.name("value").unwrap().as_str()));
+                delivery_section.entries.insert(result.name("label").unwrap().as_str().trim().to_owned(), result.name("value").unwrap().as_str().to_owned());
             }
 
-            let section = structure.sections.entry(String::from("delivery")).or_insert(Vec::new());
-            section.push(delivery_section);        
+            let section = structure.sections.entry("delivery".to_owned()).or_insert(Vec::new());
+            section.push(delivery_section);
         },
-        Err(_) => {}
+        None => {}
     }
 
     Ok(structure)
 }
 
 pub fn dcgr110_text_parse(text: String) -> Result<USDADataPackage, String> {
-    let text_array = text.split_terminator("\n").collect();
+    let text_array: Vec<&str> = text.split_terminator('\n').collect();
 
     let mut structure = USDADataPackage::new(String::from("DC_GR110"));  
 
     let location: usize = {
-        lazy_static! {
-            static ref RE_DATE_LINE: Regex = Regex::new(r"^Dodge City,\s+KS").unwrap();
+        match find_line_starts_with(&text_array, "Dodge City, KS") {
+            Some(line) => {line},
+            None => {
+                return Err("Failed to locate report date line".to_owned());
+            }
         }
-        find_line(&text_array, &RE_DATE_LINE)?
     };
 
     let report_date = {
@@ -253,7 +290,7 @@ pub fn dcgr110_text_parse(text: String) -> Result<USDADataPackage, String> {
                     "apr" => {4},  "may" => {5},  "jun" => {6},
                     "jul" => {7},  "aug" => {8},  "sep" => {9},
                     "oct" => {10}, "nov" => {11}, "dec" => {12},
-                    _ => return Err(String::from(format!("Invalid month name captured: {}",  month_name)))
+                    _ => return Err(format!("Invalid month name captured: {}",  month_name))
                 };
 
                 NaiveDate::from_ymd(
@@ -263,16 +300,18 @@ pub fn dcgr110_text_parse(text: String) -> Result<USDADataPackage, String> {
                 )
             },
             None => {
-                return Err(String::from("Failed to parse date line for report, aborting."));
+                return Err("Failed to parse date line for report, aborting.".to_owned());
             }
         }
     };
 
     let mut location: usize = {
-        lazy_static! {
-            static ref RE_WHEAT_LINE: Regex = Regex::new(r"HRW WHEAT ORD US NO 1").unwrap();
+        match find_line_contains(&text_array, "HRW WHEAT ORD US NO 1") {
+            Some(line) => { line },
+            None => {
+                return Err("Failed to locate wheat line".to_owned());
+            }
         }
-        find_line(&text_array, &RE_WHEAT_LINE)?
     } + 2;
 
     lazy_static! {
@@ -280,7 +319,7 @@ pub fn dcgr110_text_parse(text: String) -> Result<USDADataPackage, String> {
     }
 
     let mut section_order = vec!["soybeans", "sorghum", "corn", "wheat",];
-    let mut section = structure.sections.entry(section_order.pop().unwrap().to_string()).or_insert(Vec::new());
+    let mut section = structure.sections.entry(section_order.pop().unwrap().to_string()).or_insert_with(Vec::new);
 
     loop {
         let result = RE_PRICE_LINE.captures(text_array[location]);
@@ -303,14 +342,14 @@ pub fn dcgr110_text_parse(text: String) -> Result<USDADataPackage, String> {
                 
                 let current_object = section.last_mut().unwrap();
                 current_object.independent.push(report_date.format("%Y-%m-%d").to_string());
-                current_object.independent.push(String::from(r.name("region").unwrap().as_str().trim()));
-                current_object.entries.insert(String::from("bid"), format!("{}", insert_price));
+                current_object.independent.push(r.name("region").unwrap().as_str().trim().to_owned());
+                current_object.entries.insert("bid".to_owned(), format!("{}", insert_price));
             },
             None => {
-                if section_order.len() == 0 {
+                if section_order.is_empty() {
                     break;
                 } else {
-                    section = structure.sections.entry(section_order.pop().unwrap().to_string()).or_insert(Vec::new());
+                    section = structure.sections.entry(section_order.pop().unwrap().to_string()).or_insert_with(Vec::new);
                     location += 2;
                 }
             }
@@ -318,8 +357,8 @@ pub fn dcgr110_text_parse(text: String) -> Result<USDADataPackage, String> {
         
         location += 1;
 
-        if location == text_array.len() && section_order.len() > 0 {
-            return Err(String::from(format!("Failed to parse report, hit end of report early. Missed sections: {:?}", section_order)))
+        if location == text_array.len() && !section_order.is_empty() {
+            return Err(format!("Failed to parse report, hit end of report early. Missed sections: {:?}", section_order))
         }
     }
 
