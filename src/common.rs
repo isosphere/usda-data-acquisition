@@ -12,7 +12,7 @@ pub struct USDADataPackageSection {
 impl USDADataPackageSection {
     pub fn new(report_date: NaiveDate) -> USDADataPackageSection {
         USDADataPackageSection {
-            report_date: report_date,
+            report_date,
             independent: Vec::new(),
             entries: HashMap::new()
         }
@@ -31,7 +31,7 @@ pub struct USDADataPackage {
 impl USDADataPackage {
     pub fn new(name: String) -> USDADataPackage {
         USDADataPackage {
-            name: name,
+            name,
             sections: HashMap::new(),
         }
     }

@@ -53,7 +53,7 @@ impl<'de> Deserialize<'de> for MeasurementFlag {
                 "P" => {Ok(MeasurementFlag::MissingPresumedZero)},
                 "T" => {Ok(MeasurementFlag::TraceOfPrecipitation)},
                 "W" => {Ok(MeasurementFlag::ConvertedFromWBANCode)},
-                q => {Err(D::Error::custom(String::from(format!("Unknown measurement flag: {}", q))))}
+                q => {Err(D::Error::custom(format!("Unknown measurement flag: {}", q)))}
             }
         }
 }
@@ -97,7 +97,7 @@ impl<'de> Deserialize<'de> for QualityFlag {
                 "W" => {Ok(QualityFlag::TooWarmForSnow)},
                 "X" => {Ok(QualityFlag::FailedBoundsCheck)},
                 "Z" => {Ok(QualityFlag::FlaggedDatzilla)},
-                q => {Err(D::Error::custom(String::from(format!("Unknown quality flag: {}", q))))}
+                q => {Err(D::Error::custom(format!("Unknown quality flag: {}", q)))}
             }
         }
 }
@@ -162,11 +162,11 @@ impl FixedWidth for Observation {
 
 impl fmt::Display for Observation {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Station ID: '{}'. {}-{:02}. Element: {}\n", self.station_id, self.year, self.month, self.element);
-        write!(f, "Records:\n");
+        writeln!(f, "Station ID: '{}'. {}-{:02}. Element: {}", self.station_id, self.year, self.month, self.element);
+        writeln!(f, "Records:");
         for i in 0..31 {
             let day = self.observations.get(i).unwrap();
-            write!(f, "{} = {}\n", i+1, day);
+            writeln!(f, "{} = {}", i+1, day);
         }
         Ok(())
     }
@@ -192,7 +192,7 @@ pub fn retrieve_noaa_ftp() -> Result<Cursor<Vec<u8>>, String> {
     match ftp_stream.transfer_type(Binary) {
         Ok(_) => {},
         Err(e) => {
-            return Err(String::from(format!("Failed to set transfer type to binary: {}", e)))
+            return Err(format!("Failed to set transfer type to binary: {}", e))
         }
     }
 
@@ -200,7 +200,7 @@ pub fn retrieve_noaa_ftp() -> Result<Cursor<Vec<u8>>, String> {
         match ftp_stream.simple_retr("/pub/data/ghcn/daily/ghcnd_gsn.tar.gz") {
             Ok(stream) => { stream },
             Err(e) => {
-                return Err(String::from(format!("Failed to read stream: {}", e)))
+                return Err(format!("Failed to read stream: {}", e))
             }
         }
     };
@@ -250,7 +250,7 @@ pub fn process_noaa<R: Read>(cursor: R, element_filter: Option<String>) -> Resul
         let mut buffer = Vec::with_capacity(file_size);
         match file.read_to_end(&mut buffer) {
             Ok(_) => {},
-            Err(e) => {return Err(String::from(format!("Failed to read file in archive into memory: {}", e)))}
+            Err(e) => {return Err(format!("Failed to read file in archive into memory: {}", e))}
         }
 
         let mut reader = Reader::from_bytes(buffer).width(269).linebreak(LineBreak::Newline);

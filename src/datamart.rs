@@ -48,7 +48,7 @@ pub fn check_datamart() -> Result<(), String> {
 
     let result = response.into_json_deserialize::<DatamartResponse>();
     match result {
-        Ok(j) => { Ok(()) },
+        Ok(_) => { Ok(()) },
         Err(_) => { 
             Err(format!("Response from datamart server is not valid JSON, or the structure has changed significantly. Target url: {}", target_url))
         }
@@ -58,14 +58,14 @@ pub fn check_datamart() -> Result<(), String> {
 
 pub fn process_datamart(slug_id: String, report_date:Option<NaiveDate>, config: &HashMap<String, DatamartConfig>, http_connect_timeout:Arc<u64>, http_receive_timeout:Arc<u64>, minimum_date:Option<NaiveDate>) -> Result<USDADataPackage, String> {
     if !config.contains_key(&slug_id) {
-        return Err(format!("Slug ID {} is not known to our datamart configuration.", slug_id).to_owned());
+        return Err(format!("Slug ID {} is not known to our datamart configuration.", slug_id));
     }
 
     let report_label = &config.get(&slug_id).unwrap().name;
     let mut result = USDADataPackage::new(report_label.to_owned());
 
     for section in config[&slug_id].sections.keys() {
-        let section_data = result.sections.entry(section.to_owned()).or_insert(Vec::new());
+        let section_data = result.sections.entry(section.to_owned()).or_insert_with(Vec::new);
 
         let target_url = {
             let base_url = format!("https://mpr.datamart.ams.usda.gov/services/v1.1/reports/{}", slug_id);
@@ -102,7 +102,7 @@ pub fn process_datamart(slug_id: String, report_date:Option<NaiveDate>, config: 
         let response = ureq::get(&target_url).timeout_connect(*http_connect_timeout).timeout_read(*http_receive_timeout).call();
         
         if let Some(error) = response.synthetic_error() {
-            return Err(format!("Failed to retrieve data from datamart server with URL {}. Error: {}", target_url, error).to_owned());
+            return Err(format!("Failed to retrieve data from datamart server with URL {}. Error: {}", target_url, error));
         }
 
         let parsed = {
@@ -110,17 +110,14 @@ pub fn process_datamart(slug_id: String, report_date:Option<NaiveDate>, config: 
             match result {
                 Ok(j) => { j },
                 Err(_) => { 
-                    return Err(format!("Response from datamart server is not valid JSON, or the structure has changed significantly. Target url: {}", target_url).to_owned());
+                    return Err(format!("Response from datamart server is not valid JSON, or the structure has changed significantly. Target url: {}", target_url));
                 }
             }
         };
 
-        match parsed.message {
-            Some(message) => {
-                println!("Message from datamart: {}", message)
-            }
-            None => {}
-        }
+        if let Some(message) = parsed.message {
+            println!("Message from datamart: {}", message)
+        };
 
         match parsed.results {
             Some(results) => {
@@ -151,7 +148,7 @@ pub fn process_datamart(slug_id: String, report_date:Option<NaiveDate>, config: 
                                 )                        
                             },
                             None => {
-                                return Err(format!("Failed to parse independent column from datamart response: {}", independent).to_owned())
+                                return Err(format!("Failed to parse independent column from datamart response: {}", independent))
                             }
                         }
                     };
