@@ -120,9 +120,10 @@ pub fn lmxb463_text_parse(text: String) -> Result<USDADataPackage, String> {
 
     lazy_static! {
         static ref RE_PRIMAL_VALUE: Regex = Regex::new(r"(?i)(?P<label>(([A-Z])\s?)+)\s+(?P<comprehensive>\d+\.\d{2})\s+(?P<prime>\d+\.\d{2})\s+(?P<branded>\d+\.\d{2})\s+(?P<choice>\d+\.\d{2})\s+(?P<select>\d+\.\d{2})\s+(?P<ungraded>\d+\.\d{2})").unwrap();
-    }    
-    for i in location..=location+8 {
-        match RE_PRIMAL_VALUE.captures(text_array[i]) {
+    }
+    
+    for line in &text_array[location..=location+8] {
+        match RE_PRIMAL_VALUE.captures(line) {
             Some(x) => {
                 for column in &["comprehensive", "prime", "branded", "choice", "select", "ungraded"] {
                     let label = x.name("label").unwrap().as_str().to_lowercase().trim().replace(" ", "_");
@@ -163,8 +164,8 @@ pub fn lmxb463_text_parse(text: String) -> Result<USDADataPackage, String> {
         static ref RE_QUALITY_VALUE: Regex = Regex::new(r"(?i)(?P<label>[A-Z]+)\**\s+(?P<value>([0-9,]+))").unwrap();
     }
 
-    for i in location..=location+4 {
-        let quality = RE_QUALITY_VALUE.captures(text_array[i]).unwrap();
+    for line in &text_array[location..=location+4] {
+        let quality = RE_QUALITY_VALUE.captures(line).unwrap();
         quality_section.entries.insert(quality.name("label").unwrap().as_str().to_owned(), quality.name("value").unwrap().as_str().to_owned());
     }
 
@@ -192,8 +193,8 @@ pub fn lmxb463_text_parse(text: String) -> Result<USDADataPackage, String> {
         static ref RE_SALES_VALUE: Regex = Regex::new(r"(?i)(?P<label>(([A-Z0-9/\-]+)\s{0,2})+)\s+(?P<value>([0-9,]+))").unwrap();
     }
 
-    for i in location..=location+3 {
-        let sales = RE_SALES_VALUE.captures(text_array[i]).unwrap();
+    for line in &text_array[location..=location+3] {
+        let sales = RE_SALES_VALUE.captures(line).unwrap();
         sales_section.entries.insert(sales.name("label").unwrap().as_str().trim().to_owned(), sales.name("value").unwrap().as_str().to_owned());
     }
 
@@ -208,26 +209,23 @@ pub fn lmxb463_text_parse(text: String) -> Result<USDADataPackage, String> {
         find_line_regex(&text_array, &RE_LOCATION_DESTINATION)
     };
 
-    match location {
-        Some(line) => {
-            let line = line + 1;
+    if let Some(line) = location {
+        let line = line + 1;
 
-            let mut destination_section = USDADataPackageSection::new(report_date);
-            destination_section.independent.push(report_date.format("%Y-%m-%d").to_string());            
+        let mut destination_section = USDADataPackageSection::new(report_date);
+        destination_section.independent.push(report_date.format("%Y-%m-%d").to_string());            
 
-            lazy_static! {
-                static ref RE_DESTINATION_VALUE: Regex = Regex::new(r"(?i)(?P<label>(([A-Z]+)\s?)+)\s+(?P<value>([0-9,]+))").unwrap();
-            }
+        lazy_static! {
+            static ref RE_DESTINATION_VALUE: Regex = Regex::new(r"(?i)(?P<label>(([A-Z]+)\s?)+)\s+(?P<value>([0-9,]+))").unwrap();
+        }
 
-            for i in line..=line+2 {
-                let result = RE_DESTINATION_VALUE.captures(text_array[i]).unwrap();
-                destination_section.entries.insert(result.name("label").unwrap().as_str().trim().to_owned(), result.name("value").unwrap().as_str().to_owned());
-            }
-            
-            let section = structure.sections.entry("destination".to_owned()).or_insert(Vec::new());
-            section.push(destination_section);
-        },
-        None => {}
+        for line in &text_array[line..=line+2] {
+            let result = RE_DESTINATION_VALUE.captures(line).unwrap();
+            destination_section.entries.insert(result.name("label").unwrap().as_str().trim().to_owned(), result.name("value").unwrap().as_str().to_owned());
+        }
+        
+        let section = structure.sections.entry("destination".to_owned()).or_insert_with(Vec::new);
+        section.push(destination_section);
     }
 
     // delivery period
@@ -238,26 +236,23 @@ pub fn lmxb463_text_parse(text: String) -> Result<USDADataPackage, String> {
         find_line_regex(&text_array, &RE_LOCATION_DELIVERY)
     };
 
-    match location {
-        Some(line) => {
-            let line = line + 1;
+    if let Some(line) = location {
+        let line = line + 1;
 
-            lazy_static! {
-                static ref RE_DELIVERY_VALUE: Regex = Regex::new(r"(?i)(?P<label>(([A-Z0-9-]+)\s?)+)\s+(?P<value>([0-9,]+))").unwrap();
-            }
+        lazy_static! {
+            static ref RE_DELIVERY_VALUE: Regex = Regex::new(r"(?i)(?P<label>(([A-Z0-9-]+)\s?)+)\s+(?P<value>([0-9,]+))").unwrap();
+        }
 
-            let mut delivery_section = USDADataPackageSection::new(report_date);
-            delivery_section.independent.push(report_date.format("%Y-%m-%d").to_string());
+        let mut delivery_section = USDADataPackageSection::new(report_date);
+        delivery_section.independent.push(report_date.format("%Y-%m-%d").to_string());
 
-            for i in line..=line+3 {
-                let result = RE_DELIVERY_VALUE.captures(text_array[i]).unwrap();
-                delivery_section.entries.insert(result.name("label").unwrap().as_str().trim().to_owned(), result.name("value").unwrap().as_str().to_owned());
-            }
+        for line in &text_array[line..=line+3] {
+            let result = RE_DELIVERY_VALUE.captures(line).unwrap();
+            delivery_section.entries.insert(result.name("label").unwrap().as_str().trim().to_owned(), result.name("value").unwrap().as_str().to_owned());
+        }
 
-            let section = structure.sections.entry("delivery".to_owned()).or_insert(Vec::new());
-            section.push(delivery_section);
-        },
-        None => {}
+        let section = structure.sections.entry("delivery".to_owned()).or_insert_with(Vec::new);
+        section.push(delivery_section);
     }
 
     Ok(structure)
