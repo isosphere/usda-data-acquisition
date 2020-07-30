@@ -141,7 +141,7 @@ fn find_maximum_existing_date(current_config: &DatamartConfig, client: &mut post
     let mut max_date_found: Option<NaiveDate> = None;
 
     for section in current_config.sections.keys() {
-        let table_name = String::from(format!("{}_{}", current_config.name, section).to_lowercase());
+        let table_name = format!("{}_{}", current_config.name, section).to_lowercase();
 
         let sql = format!("SELECT MAX(report_date) FROM {}", table_name);
         let statement = client.prepare(&sql).unwrap();
@@ -154,7 +154,7 @@ fn find_maximum_existing_date(current_config: &DatamartConfig, client: &mut post
 
                 match (max_date_found, value) {
                     (Some(date), Some(value)) => {
-                        if &date < &value {
+                        if date < value {
                             max_date_found = Some(value);
                         }
                     },
@@ -164,7 +164,7 @@ fn find_maximum_existing_date(current_config: &DatamartConfig, client: &mut post
                 }
             },
             Err(_) => {
-                return Err(String::from(format!("Failed to obtain latest data for {}, aborting.", table_name)))
+                return Err(format!("Failed to obtain latest data for {}, aborting.", table_name))
             }
         }
     }
@@ -176,23 +176,21 @@ fn find_maximum_existing_date(current_config: &DatamartConfig, client: &mut post
 }
 
 fn prepare_client(host: Arc<String>, port: Arc<u16>, user: Arc<String>, dbname: Arc<String>, password: Arc<String>) -> postgres::Client {
-    let client = Config::new()
+    Config::new()
         .host(&host)
         .port(*port)
         .user(&user)
         .dbname(&dbname)
         .password(password.to_string())
-        .connect(NoTls).unwrap();
-
-    client
+        .connect(NoTls).unwrap()
 }
 
-fn create_table(name:String, independent: &Vec<String>, client: &mut postgres::Client) -> Result<usize, postgres::Error> {
+fn create_table(name:String, independent: &[String], client: &mut postgres::Client) -> Result<usize, postgres::Error> {
     // warning: this SQL construction is sensitive magic and prone to breaking
-    let mut sql = String::from(format!(r#"
+    let mut sql = format!(r#"
         CREATE TABLE IF NOT EXISTS {0} (
             report_date date not null,
-    "#, &name));
+    "#, &name);
 
     for column in &independent[1..] {
         sql.push_str(&format!("\t\"{}\" text not null,", column));
@@ -221,9 +219,9 @@ fn insert_package(package: USDADataPackage, structure: &datamart::DatamartConfig
     for (section, results) in package.sections {
         // Dynamic statement preparation
         // warning: this SQL construction is sensitive magic and prone to breaking
-        let table_name = String::from(format!("{}_{}", report_name, section));
+        let table_name = format!("{}_{}", report_name, section).to_owned();
         let independent = &structure.sections[&section].independent;
-        let mut sql = String::from(format!(r#"INSERT INTO {table_name} (report_date, "#, table_name=&table_name));
+        let mut sql = format!(r#"INSERT INTO {table_name} (report_date, "#, table_name=&table_name).to_owned();
         
         for column in &independent[1..] {
             sql.push_str(&format!("\"{}\", ", column));
@@ -252,7 +250,7 @@ fn insert_package(package: USDADataPackage, structure: &datamart::DatamartConfig
                         Err(_) => { None }
                     }
                 };
-                if value.len() > 0 {
+                if !value.is_empty() {
                     let mut params: Vec<&(dyn ToSql + Sync)> = Vec::new(); // this is some kind of magic that i do not yet understand
                     
                     params.push(&report_date);
@@ -319,12 +317,10 @@ fn main() {
             Some(c) => {
                 if c.contains_key("postgres") && c["postgres"].contains_key("dbname") {
                     Arc::new(String::from(&c["postgres"]["dbname"]))
+                } else if matches.is_present("database") {
+                    Arc::new(matches.value_of("database").unwrap().to_string())
                 } else {
-                    if matches.is_present("database") {
-                        Arc::new(matches.value_of("database").unwrap().to_string())
-                    } else {
-                        panic!("Must specify postgres dbname either by command line argument or via secret config")
-                    }
+                    panic!("Must specify postgres dbname either by command line argument or via secret config")
                 }
             },
             None => {
@@ -338,9 +334,9 @@ fn main() {
         }
     };
 
-    let postgresql_port = Arc::new(matches.value_of("port").unwrap().parse::<u16>().expect(&format!("Invalid port specified: '{}.'", matches.value_of("port").unwrap())));
-    let http_connect_timeout = Arc::new(matches.value_of("http-connect-timeout").unwrap().parse::<u64>().expect(&format!("Invalid http connect timeout specified: {}", matches.value_of("http-connect-timeout").unwrap())));
-    let http_receive_timeout = Arc::new(matches.value_of("http-receive-timeout").unwrap().parse::<u64>().expect(&format!("Invalid http receive timeout specified: {}", matches.value_of("http-receive-timeout").unwrap())));
+    let postgresql_port = Arc::new(matches.value_of("port").unwrap().parse::<u16>().unwrap_or_else(|_| panic!("Invalid port specified: '{}.'", matches.value_of("port").unwrap())));
+    let http_connect_timeout = Arc::new(matches.value_of("http-connect-timeout").unwrap().parse::<u64>().unwrap_or_else(|_| panic!("Invalid http connect timeout specified: {}", matches.value_of("http-connect-timeout").unwrap())));
+    let http_receive_timeout = Arc::new(matches.value_of("http-receive-timeout").unwrap().parse::<u64>().unwrap_or_else(|_| panic!("Invalid http receive timeout specified: {}", matches.value_of("http-receive-timeout").unwrap())));
     
     println!("Connecting to PostgreSQL {}:{} as user '{}'.", postgresql_host, postgresql_port, postgresql_user);
     let postgresql_pass = {
@@ -389,7 +385,7 @@ fn main() {
             let report_name = &current_config.name;
 
             for (section_name, section_data) in &legacy_config.get(slug).unwrap().sections {
-                create_table(String::from(format!("{}_{}", report_name, section_name)), &section_data.independent, &mut client).unwrap();
+                create_table(format!("{}_{}", report_name, section_name).to_owned(), &section_data.independent, &mut client).unwrap();
             }        
         }
         
@@ -398,7 +394,7 @@ fn main() {
             let report_name = &current_config.name;
 
             for (section_name, section_data) in &datamart_config.get(slug).unwrap().sections {
-                create_table(String::from(format!("{}_{}", report_name, section_name)), &section_data.independent, &mut client).unwrap();
+                create_table(format!("{}_{}", report_name, section_name).to_owned(), &section_data.independent, &mut client).unwrap();
             }
         }
     } 
@@ -412,7 +408,7 @@ fn main() {
                     if e.file_type().is_file() {
                         let mut ancestors = e.path().ancestors();
                         let identifier = e.path().parent().unwrap().strip_prefix(ancestors.nth(2).unwrap()).unwrap().to_str().unwrap().to_uppercase();
-                        let current_config = legacy_config.get(&String::from(&identifier)).expect(&format!("Unknown report: {}", &identifier));
+                        let current_config = legacy_config.get(&identifier).unwrap_or_else(|| panic!("Unknown report: {}", &identifier));
                         let path = e.path().to_str().unwrap();
 
                         let report = {
@@ -458,38 +454,52 @@ fn main() {
     }
 
     if matches.is_present("backfill-datamart") {
-        for slug in datamart_config.keys() {
-            let http_connect_timeout = http_connect_timeout.clone();
-            let http_receive_timeout = http_receive_timeout.clone();
+        match datamart::check_datamart() {
+            Ok(_) => {
+                for slug in datamart_config.keys() {
+                    let http_connect_timeout = http_connect_timeout.clone();
+                    let http_receive_timeout = http_receive_timeout.clone();
 
-            let result = datamart::process_datamart(String::from(slug), None, &datamart_config, http_connect_timeout, http_receive_timeout, None);
-            let current_config = datamart_config.get(slug).unwrap();
+                    let result = datamart::process_datamart(slug.to_owned(), None, &datamart_config, http_connect_timeout, http_receive_timeout, None);
+                    let current_config = datamart_config.get(slug).unwrap();
 
-            match result {
-                Ok(structure) => {
-                    insert_package(structure, current_config, &mut client).unwrap();
-                },
-                Err(e) => {
-                    eprintln!("Failed to process datamart reponse: {}", e);
+                    match result {
+                        Ok(structure) => {
+                            insert_package(structure, current_config, &mut client).unwrap();
+                        },
+                        Err(e) => {
+                            eprintln!("Failed to process datamart reponse: {}", e);
+                        }
+                    }
                 }
+            },
+            Err(_) => {
+                eprintln!("Datamart is not responsive, unable to fetch data.")
             }
         }
     } else if matches.is_present("slug") {
-        let slug = matches.value_of("slug").unwrap();
-        let result = datamart::process_datamart(String::from(slug), None, &datamart_config, http_connect_timeout, http_receive_timeout, None);
-        let current_config = datamart_config.get(slug).unwrap();
+        match datamart::check_datamart() {
+            Ok(_) => {
+                let slug = matches.value_of("slug").unwrap();
+                let result = datamart::process_datamart(slug.to_owned(), None, &datamart_config, http_connect_timeout, http_receive_timeout, None);
+                let current_config = datamart_config.get(slug).unwrap();
 
-        match result {
-            Ok(structure) => {
-                insert_package(structure, current_config, &mut client).unwrap();
+                match result {
+                    Ok(structure) => {
+                        insert_package(structure, current_config, &mut client).unwrap();
+                    },
+                    Err(e) => {
+                        eprintln!("Failed to process datamart reponse: {}", e);
+                    }
+                }
             },
-            Err(e) => {
-                eprintln!("Failed to process datamart reponse: {}", e);
+            Err(_) => {
+                eprintln!("Datamart is not responsive, unable to fetch data.")
             }
         }
     } else if matches.is_present("update") {
-        for identifier in vec!["LM_XB463", "DC_GR110"] {
-            let current_config = legacy_config.get(identifier).expect(&format!("Configuration for legacy report not found: {}", identifier));
+        for identifier in &["LM_XB463", "DC_GR110"] {
+            let current_config = legacy_config.get(*identifier).unwrap_or_else(|| panic!("Configuration for legacy report not found: {}", identifier));
             let http_connect_timeout = http_connect_timeout.clone();
             let http_receive_timeout = http_receive_timeout.clone();
 
@@ -515,7 +525,7 @@ fn main() {
                 continue;
             }
 
-            let releases = fetch_releases_by_identifier(&esmis_api_key, String::from(identifier), Some(maximum_existing_date), Some(today), http_connect_timeout, http_receive_timeout);
+            let releases = fetch_releases_by_identifier(&esmis_api_key, (*identifier).to_owned(), Some(maximum_existing_date), Some(today), http_connect_timeout, http_receive_timeout);
 
             match releases {
                 Ok(v) => {
@@ -529,7 +539,7 @@ fn main() {
                                     return eprintln!("Failed to retrieve data from datamart server with URL {}. Error: {}", &release, error);
                                 } else {
                                     let result = { 
-                                        match identifier {
+                                        match *identifier {
                                             "LM_XB463" => {legacy::lmxb463_text_parse(response.into_string().unwrap())},
                                             "DC_GR110" => {legacy::dcgr110_text_parse(response.into_string().unwrap())},
                                             _ => {
@@ -559,40 +569,46 @@ fn main() {
             };
         }
         
+        match datamart::check_datamart() {
+            Ok(_) => {
+                for slug in datamart_config.keys() {
+                    let http_connect_timeout = http_connect_timeout.clone();
+                    let http_receive_timeout = http_receive_timeout.clone();
+                    let current_config = datamart_config.get(slug).unwrap();
 
-        for slug in datamart_config.keys() {
-            let http_connect_timeout = http_connect_timeout.clone();
-            let http_receive_timeout = http_receive_timeout.clone();
-            let current_config = datamart_config.get(slug).unwrap();
+                    let maximum_existing_date = {
+                        match find_maximum_existing_date(&current_config, &mut client) {
+                            Ok(v) => {
+                                v
+                            },
+                            Err(_) => {
+                                println!("No existing data found for {}, defaulting to a start date of 2008-01-01.", slug);
+                                NaiveDate::from_ymd(2008, 1, 1)
+                            }
+                        }
+                    } + Duration::days(1);
 
-            let maximum_existing_date = {
-                match find_maximum_existing_date(&current_config, &mut client) {
-                    Ok(v) => {
-                        v
-                    },
-                    Err(_) => {
-                        println!("No existing data found for {}, defaulting to a start date of 2008-01-01.", slug);
-                        NaiveDate::from_ymd(2008, 1, 1)
+                    if maximum_existing_date > Local::now().naive_local().date() {
+                        continue;
+                    }
+
+                    println!("Current maximum date for {} is {}. Requesting new data.", current_config.name, maximum_existing_date);
+
+                    let result = datamart::process_datamart(slug.to_owned(), None, &datamart_config, http_connect_timeout, http_receive_timeout, Some(maximum_existing_date));
+                    let current_config = datamart_config.get(slug).unwrap();
+            
+                    match result {
+                        Ok(structure) => {
+                            insert_package(structure, current_config, &mut client).unwrap();
+                        },
+                        Err(e) => {
+                            eprintln!("Failed to process datamart reponse: {}", e);
+                        }
                     }
                 }
-            } + Duration::days(1);
-
-            if maximum_existing_date > Local::now().naive_local().date() {
-                continue;
-            }
-
-            println!("Current maximum date for {} is {}. Requesting new data.", current_config.name, maximum_existing_date);
-
-            let result = datamart::process_datamart(String::from(slug), None, &datamart_config, http_connect_timeout, http_receive_timeout, Some(maximum_existing_date));
-            let current_config = datamart_config.get(slug).unwrap();
-    
-            match result {
-                Ok(structure) => {
-                    insert_package(structure, current_config, &mut client).unwrap();
-                },
-                Err(e) => {
-                    eprintln!("Failed to process datamart reponse: {}", e);
-                }
+            },
+            Err(_) => {
+                eprintln!("Datamart is not responsive, unable to fetch data.")
             }
         }
     }

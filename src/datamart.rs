@@ -30,18 +30,42 @@ pub struct DatamartResponse {
     stats: HashMap<String, u32>,
     results: Option<Vec<HashMap<String, Option<String>>>>,
     message: Option<String>
-}    
+}
+
+/// Datamart is not very reliable, and we must use very large timeouts to capture data.
+/// This function does a simple query that is expected to return quickly to ensure
+/// that datamart is working and ready for more serious queries, so that we can avoid our
+/// long timeout.
+pub fn check_datamart() -> Result<(), String> {
+    // this is the fastest query I can find
+    let target_url = "https://mpr.datamart.ams.usda.gov/services/v1.1/reports/2451/?q=report_date=01/01/2020".to_owned();
+    
+    let response = ureq::get(&target_url).timeout_connect(3).timeout_read(3).call();
+        
+    if let Some(error) = response.synthetic_error() {
+        return Err(format!("Failed to retrieve data from datamart server with URL {}. Error: {}", target_url, error));
+    }
+
+    let result = response.into_json_deserialize::<DatamartResponse>();
+    match result {
+        Ok(j) => { Ok(()) },
+        Err(_) => { 
+            Err(format!("Response from datamart server is not valid JSON, or the structure has changed significantly. Target url: {}", target_url))
+        }
+    }
+}
+
 
 pub fn process_datamart(slug_id: String, report_date:Option<NaiveDate>, config: &HashMap<String, DatamartConfig>, http_connect_timeout:Arc<u64>, http_receive_timeout:Arc<u64>, minimum_date:Option<NaiveDate>) -> Result<USDADataPackage, String> {
     if !config.contains_key(&slug_id) {
-        return Err(String::from(format!("Slug ID {} is not known to our datamart configuration.", slug_id)));
+        return Err(format!("Slug ID {} is not known to our datamart configuration.", slug_id).to_owned());
     }
 
     let report_label = &config.get(&slug_id).unwrap().name;
-    let mut result = USDADataPackage::new(String::from(report_label));
+    let mut result = USDADataPackage::new(report_label.to_owned());
 
     for section in config[&slug_id].sections.keys() {
-        let section_data = result.sections.entry(String::from(section)).or_insert(Vec::new());
+        let section_data = result.sections.entry(section.to_owned()).or_insert(Vec::new());
 
         let target_url = {
             let base_url = format!("https://mpr.datamart.ams.usda.gov/services/v1.1/reports/{}", slug_id);
@@ -78,7 +102,7 @@ pub fn process_datamart(slug_id: String, report_date:Option<NaiveDate>, config: 
         let response = ureq::get(&target_url).timeout_connect(*http_connect_timeout).timeout_read(*http_receive_timeout).call();
         
         if let Some(error) = response.synthetic_error() {
-            return Err(String::from(format!("Failed to retrieve data from datamart server with URL {}. Error: {}", target_url, error)));
+            return Err(format!("Failed to retrieve data from datamart server with URL {}. Error: {}", target_url, error).to_owned());
         }
 
         let parsed = {
@@ -86,7 +110,7 @@ pub fn process_datamart(slug_id: String, report_date:Option<NaiveDate>, config: 
             match result {
                 Ok(j) => { j },
                 Err(_) => { 
-                    return Err(String::from(format!("Response from datamart server is not valid JSON, or the structure has changed significantly. Target url: {}", target_url)));
+                    return Err(format!("Response from datamart server is not valid JSON, or the structure has changed significantly. Target url: {}", target_url).to_owned());
                 }
             }
         };
@@ -127,7 +151,7 @@ pub fn process_datamart(slug_id: String, report_date:Option<NaiveDate>, config: 
                                 )                        
                             },
                             None => {
-                                return Err(String::from(format!("Failed to parse independent column from datamart response: {}", independent)))
+                                return Err(format!("Failed to parse independent column from datamart response: {}", independent).to_owned())
                             }
                         }
                     };
@@ -137,23 +161,23 @@ pub fn process_datamart(slug_id: String, report_date:Option<NaiveDate>, config: 
                     for column in &config[&slug_id].sections[section].fields {
                         let value = { 
                             match &entry[column] {
-                                Some(s) => { String::from(s) },
-                                None => { String::from("") }
+                                Some(s) => { s.to_owned() },
+                                None => { "".to_owned() }
                             }
                         };
-                        data.entries.insert(String::from(column), value);
+                        data.entries.insert(column.to_owned(), value);
                     }
 
                     for column in &config[&slug_id].sections[section].independent {
                         let value = entry.get(column).unwrap().as_ref().unwrap();
-                        data.independent.push(String::from(value));
+                        data.independent.push(value.to_owned());
                     }
 
                     section_data.push(data);
                 }
             },
             None => {
-                return Err(String::from("No results found."))
+                return Err("No results found.".to_owned())
             }
         }
     }
