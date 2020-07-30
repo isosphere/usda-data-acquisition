@@ -23,13 +23,13 @@ pub struct ESMISRelease {
 
 const API_ROOT: &str = "https://usda.library.cornell.edu/api/v1";
 
-pub fn fetch_releases_by_identifier(token:&String, identifier:String, start_date: Option<NaiveDate>, end_date: Option<NaiveDate>, http_connect_timeout:Arc<u64>, http_receive_timeout:Arc<u64>) -> Result<Option<Vec<String>>, String> {
+pub fn fetch_releases_by_identifier(token:&str, identifier:String, start_date: Option<NaiveDate>, end_date: Option<NaiveDate>, http_connect_timeout:Arc<u64>, http_receive_timeout:Arc<u64>) -> Result<Option<Vec<String>>, String> {
     let target_url = {
         let base = format!("{}/release/findByIdentifier/{}", API_ROOT, identifier);
 
         match (start_date, end_date) {
-            (None, Some(_)) => {return Err(String::from("start_date and end_date must be specified together, or not at all."))},
-            (Some(_), None) => {return Err(String::from("start_date and end_date must be specified together, or not at all."))},
+            (None, Some(_)) => {return Err("start_date and end_date must be specified together, or not at all.".to_owned())},
+            (Some(_), None) => {return Err("start_date and end_date must be specified together, or not at all.".to_owned())},
             (None, None) => { base },
             (Some(start), Some(end)) => {
                 format!("{}?start_date={}&end_date={}", base, start.format("%Y-%m-%d"), end.format("%Y-%m-%d"))
@@ -38,11 +38,11 @@ pub fn fetch_releases_by_identifier(token:&String, identifier:String, start_date
     };
 
     let response = ureq::get(&target_url)
-        .set("Authorization", &String::from(format!("Bearer {}", token)))
+        .set("Authorization", &format!("Bearer {}", token))
         .timeout_connect(*http_connect_timeout).timeout_read(*http_receive_timeout).call();
 
     if let Some(error) = response.synthetic_error() {
-        return Err(String::from(format!("Failed to retrieve data from datamart server with URL {}. Error: {}", target_url, error)));
+        return Err(format!("Failed to retrieve data from datamart server with URL {}. Error: {}", target_url, error));
     }
 
     let parsed = {
@@ -50,7 +50,7 @@ pub fn fetch_releases_by_identifier(token:&String, identifier:String, start_date
         match result {
             Ok(j) => { j },
             Err(_) => { 
-                return Err(String::from(format!("Response from datamart server is not valid JSON, or the structure has changed significantly. Target url: {}", target_url)));
+                return Err(format!("Response from datamart server is not valid JSON, or the structure has changed significantly. Target url: {}", target_url));
             }
         }
     };
@@ -58,7 +58,7 @@ pub fn fetch_releases_by_identifier(token:&String, identifier:String, start_date
     let mut result: Vec<String> = Vec::new();
 
     for release in parsed {
-        result.push(String::from(release.files.first().unwrap()));
+        result.push(release.files.first().unwrap().to_owned());
     }
 
     Ok(Some(result))
