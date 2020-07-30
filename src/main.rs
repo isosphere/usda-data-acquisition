@@ -25,6 +25,7 @@ use datamart::{DatamartConfig};
 mod esmis;
 use esmis::fetch_releases_by_identifier;
 
+mod noaa;
 mod legacy;
 
 fn command_usage<'a, 'b>() -> App<'a, 'b> {

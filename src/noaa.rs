@@ -14,7 +14,7 @@ use tar::Archive;
 use serde::{Deserialize, Deserializer};
 use serde::de::Error;
 
-pub enum Element {
+/*pub enum Element {
     Precipitation,  // PRCP, tenths of mm
     Snowfall,       // SNOW (mm)
     SnowDepth,      // SNWD (mm)
@@ -24,7 +24,7 @@ pub enum Element {
     AverageCloudinessM2MManual,         // ACMH, %
     AverageCloudinessS2SCeilometer,     // ACSC, %
     AverageCloudinessS2SManual,         // ACSH, %
-}
+}*/
 
 #[derive(Debug)]
 pub enum MeasurementFlag {
