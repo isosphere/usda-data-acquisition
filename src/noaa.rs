@@ -162,11 +162,11 @@ impl FixedWidth for Observation {
 
 impl fmt::Display for Observation {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "Station ID: '{}'. {}-{:02}. Element: {}", self.station_id, self.year, self.month, self.element);
-        writeln!(f, "Records:");
+        writeln!(f, "Station ID: '{}'. {}-{:02}. Element: {}", self.station_id, self.year, self.month, self.element)?;
+        writeln!(f, "Records:")?;
         for i in 0..31 {
             let day = self.observations.get(i).unwrap();
-            writeln!(f, "{} = {}", i+1, day);
+            writeln!(f, "{} = {}", i+1, day)?;
         }
         Ok(())
     }
