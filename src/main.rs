@@ -54,6 +54,13 @@ fn command_usage<'a, 'b>() -> App<'a, 'b> {
             .required(false)
     )
     .arg(
+        Arg::with_name("backfill-noaa")
+            .long("backfill-noaa")
+            .takes_value(false)
+            .help("Trigger total download of all NOAA data")
+            .required(false)
+    )
+    .arg(
         Arg::with_name("datamart-config")
             .takes_value(true)
             .help("Location of datamart scraping configuration")
@@ -385,8 +392,11 @@ fn main() {
             let report_name = &current_config.name;
 
             for (section_name, section_data) in &legacy_config.get(slug).unwrap().sections {
-                create_table(format!("{}_{}", report_name, section_name).to_owned(), &section_data.independent, &mut client).unwrap();
-            }        
+                match create_table(format!("{}_{}", report_name, section_name).to_owned(), &section_data.independent, &mut client) {
+                    Ok(_) => {},
+                    Err(e) => {eprintln!("Failed to create table {}_{}: {}", report_name, section_name, e)}
+                }
+            }
         }
         
         for slug in datamart_config.keys() {
@@ -394,7 +404,19 @@ fn main() {
             let report_name = &current_config.name;
 
             for (section_name, section_data) in &datamart_config.get(slug).unwrap().sections {
-                create_table(format!("{}_{}", report_name, section_name).to_owned(), &section_data.independent, &mut client).unwrap();
+                match create_table(format!("{}_{}", report_name, section_name).to_owned(), &section_data.independent, &mut client) {
+                    Ok(_) => {},
+                    Err(e) => {eprintln!("Failed to create table {}_{}: {}", report_name, section_name, e)}
+                }
+            }
+        }
+
+        // NOAA
+        let noaa_structure = common::noaa_structure();
+        for (section_name, section_data) in noaa_structure.sections {
+            match create_table(format!("{}_{}", "NOAA", section_name).to_owned(), &section_data.independent, &mut client) {
+                Ok(_) => {},
+                Err(e) => {eprintln!("Failed to create table {}_{}: {}", "NOAA", section_name, e)}
             }
         }
     } 
@@ -609,6 +631,29 @@ fn main() {
             },
             Err(_) => {
                 eprintln!("Datamart is not responsive, unable to fetch data.")
+            }
+        }
+    }
+
+    if matches.is_present("backfill-noaa") {
+        println!("Fetching NOAA data...");
+        match noaa::retrieve_noaa_ftp() {
+            Ok(cursor) => {
+                println!("Parsing NOAA data...");
+                match noaa::process_noaa(cursor, None) {
+                    Ok(structure) => {
+                        println!("Inserting into database...");
+                        let converted_result = USDADataPackage::from(structure);
+                        let noaa_config = common::noaa_structure();
+                        insert_package(converted_result, &noaa_config, &mut client).unwrap();
+                    },
+                    Err(e) => {
+                        eprintln!("Failed: {}", e);
+                    }
+                }
+            },
+            Err(e) => {
+                eprintln!("Failed: {}", e);
             }
         }
     }
