@@ -213,7 +213,7 @@ pub fn lmxb463_text_parse(text: String) -> Result<USDADataPackage, String> {
         let line = line + 1;
 
         let mut destination_section = USDADataPackageSection::new(report_date);
-        destination_section.independent.push(report_date.format("%Y-%m-%d").to_string());            
+        destination_section.independent.push(report_date.format("%Y-%m-%d").to_string());
 
         lazy_static! {
             static ref RE_DESTINATION_VALUE: Regex = Regex::new(r"(?i)(?P<label>(([A-Z]+)\s?)+)\s+(?P<value>([0-9,]+))").unwrap();
