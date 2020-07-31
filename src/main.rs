@@ -640,12 +640,13 @@ fn main() {
         match noaa::retrieve_noaa_ftp() {
             Ok(cursor) => {
                 println!("Parsing NOAA data...");
-                match noaa::process_noaa(cursor, None) {
+                match noaa::process_noaa(cursor, Some("TAVG".to_owned()), Some("US".to_owned())) {
                     Ok(structure) => {
-                        println!("Inserting into database...");
-                        let converted_result = USDADataPackage::from(structure);
+                        println!("Converting structure for insertion...");
+                        let converted_result = USDADataPackage::from(structure); // this eats all of your RAM and takes forever
                         let noaa_config = common::noaa_structure();
-                        insert_package(converted_result, &noaa_config, &mut client).unwrap();
+                        println!("Inserting into database...");
+                        insert_package(converted_result, &noaa_config, &mut client).unwrap(); // mightly slow
                     },
                     Err(e) => {
                         eprintln!("Failed: {}", e);

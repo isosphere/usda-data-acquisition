@@ -247,7 +247,7 @@ pub fn retrieve_noaa_ftp() -> Result<Cursor<Vec<u8>>, String> {
     Ok(cursor)
 }
 
-pub fn process_noaa<R: Read>(cursor: R, element_filter: Option<String>) -> Result<Vec<Observation>, String> {   
+pub fn process_noaa<R: Read>(cursor: R, element_filter: Option<String>, station_country_filter: Option<String>) -> Result<Vec<Observation>, String> {   
     let tar = GzDecoder::new(cursor);
     match tar.header() {
         Some(_) => {},
@@ -299,13 +299,23 @@ pub fn process_noaa<R: Read>(cursor: R, element_filter: Option<String>) -> Resul
 
             match record_result {
                 Ok(record) => {
-                    match element_filter.as_ref() {
-                        Some(filter) => {
-                            if *filter == record.element {
+                    match (element_filter.as_ref(), station_country_filter.as_ref()) {
+                        (Some(element), Some(country)) => {
+                            if *element == record.element && record.station_id.to_lowercase().starts_with(&country.to_lowercase()) {
                                 results.push(record);
                             }
                         },
-                        None => {
+                        (None, Some(country)) => {
+                            if record.station_id.to_lowercase().starts_with(&country.to_lowercase()) {
+                                results.push(record);
+                            }
+                        }
+                        (Some(element), None) => {
+                            if *element == record.element {
+                                results.push(record);
+                            }
+                        }
+                        (None, None) => {
                             results.push(record);
                         }
                     }
@@ -350,7 +360,7 @@ AE000041196194404TMIN  180  I  180  I  163  I  146  I  135  I-9999   -9999     1
     let result = encoder.finish().unwrap();
     let cursor = Cursor::new(result);
 
-    let results = process_noaa(cursor, Some("TAVG".to_string())).unwrap();
+    let results = process_noaa(cursor, Some("TAVG".to_string()), Some("US".to_owned())).unwrap();
     for observation in results {
         println!("{}", observation);
     }

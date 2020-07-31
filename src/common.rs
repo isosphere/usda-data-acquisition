@@ -162,7 +162,7 @@ AE000041196194404TMIN  180  I  180  I  163  I  146  I  135  I-9999   -9999     1
     let result = encoder.finish().unwrap();
     let cursor = Cursor::new(result);
 
-    let results = noaa::process_noaa(cursor, None).unwrap();
+    let results = noaa::process_noaa(cursor, None, None).unwrap();
     let converted_result = USDADataPackage::from(results);
 
     println!("{:#?}", converted_result)
