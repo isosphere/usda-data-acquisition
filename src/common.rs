@@ -41,7 +41,8 @@ impl USDADataPackage {
 }
 
 lazy_static! {
-    static ref SUPPORTED_NOAA_ELEMENTS: HashSet<&'static str> = [
+    pub static ref SUPPORTED_NOAA_ELEMENTS: HashSet<&'static str> = [
+        /*
         "PRCP", "SNOW", "SNWD", "TMAX", "TMIN", "ACMC", "ACMH", "ACSC", "ACSH", "AWDR",
         "AWND", "DAEV", "DAPR", "DASF", "DATN", "DATX", "DAWM", "DWPR", "EVAP", "FMTM",
         "FRGB", "FRGT", "FRTH", "GAHT", "MDEV", "MDPR", "MDSF", "MDTN", "MDTX", "MDWM",
@@ -62,7 +63,8 @@ lazy_static! {
         "WDMV", "WESD", "WESF", "WSF1", "WSF2", "WSF5", "WSFG", "WSFI", "WSFM", "WT01",
         "WT02", "WT03", "WT04", "WT05", "WT06", "WT07", "WT08", "WT09", "WT10", "WT11",
         "WT12", "WT13", "WT14", "WT15", "WT16", "WT17", "WT18", "WT19", "WT21", "WT22",
-        "WV01", "WV03", "WV07", "WV18", "WV20"
+        "WV01", "WV03", "WV07", "WV18", "WV20"*/
+        "TMAX", "TMIN", "TAVG", "EVAP"
     ].iter().cloned().collect();
 }
 

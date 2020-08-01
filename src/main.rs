@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::convert::TryInto;
 use std::fs;
 use std::sync::Arc;
 
@@ -220,7 +221,73 @@ fn create_table(name:String, independent: &[String], client: &mut postgres::Clie
     Ok(0)
 }
 
-fn insert_package(package: USDADataPackage, structure: &datamart::DatamartConfig, client: &mut postgres::Client) -> Result<usize, postgres::Error> {
+
+fn insert_noaa_package(observations: Vec<noaa::Observation>, client: &mut postgres::Client) -> Result<(), postgres::Error> {
+    for observation in observations {
+        if !common::SUPPORTED_NOAA_ELEMENTS.contains(&(observation.element.as_str())) {
+            println!("Skipping unsupported element: {}", observation.element);
+            continue;
+        }
+
+        let table_name = format!("noaa_{}", observation.element).to_owned();
+        let sql = format!(r#"
+            INSERT INTO {table_name} (report_date, station_id, variable_name, value, value_text) VALUES($1, $2, $3, $4, $5)
+            ON CONFLICT ON CONSTRAINT {table_name}_pkeys DO NOTHING
+        "#, table_name=&table_name).to_owned();
+
+        //println!("{}", sql);
+        
+        let statement = client.prepare(&sql).unwrap();
+
+        for (day, data) in observation.observations.iter().enumerate() {
+            // if the value is empty, don't bother with this record
+            let value_string = match data.value.as_ref() {
+                Some(v) => { v.to_string() },
+                None => { continue }
+            };
+
+            let this_date = NaiveDate::from_ymd(
+                observation.year.try_into().unwrap(),
+                observation.month.try_into().unwrap(),
+                (day + 1).try_into().unwrap()
+            );
+            
+            let measure_string = match data.measure_flag.as_ref() {
+                Some(v) => {v.to_string()},
+                None => {"".to_owned()}
+            };
+            
+            let quality_string = match data.quality_flag.as_ref() {
+                Some(v) => { v.to_string() },
+                None => {"".to_owned()}
+            };
+
+            let empty_value: Option<f32> = None;
+
+            client.execute(&statement, &[
+                &this_date, &observation.station_id, &"quality_flag".to_owned(), &empty_value, &quality_string
+            ])?;
+            client.execute(&statement, &[
+                &this_date, &observation.station_id, &"source_flag".to_owned(), &empty_value, &data.source_flag
+            ])?;
+            client.execute(&statement, &[
+                &this_date, &observation.station_id, &"measure_flag".to_owned(), &empty_value, &measure_string
+            ])?;
+
+            let value_numeric: Option<f32> = match data.value.as_ref() {
+                Some(v) => {Some(*v as f32)},
+                None => {None}
+            };
+
+            client.execute(&statement, &[
+                &this_date, &observation.station_id, &"value".to_owned(), &value_numeric, &value_string
+            ])?;
+        }
+    }
+    Ok(())
+}
+
+fn insert_usda_package(package: USDADataPackage, structure: &datamart::DatamartConfig, client: &mut postgres::Client) -> Result<usize, postgres::Error> {
     let report_name = package.name;
 
     for (section, results) in package.sections {
@@ -456,7 +523,7 @@ fn main() {
         
                         match result {
                             Ok(structure) => {
-                                insert_package(structure, current_config, &mut client).unwrap();
+                                insert_usda_package(structure, current_config, &mut client).unwrap();
                                 println!("{} processed and inserted.", &path);
                             },
                             Err(e) => {
@@ -487,7 +554,7 @@ fn main() {
 
                     match result {
                         Ok(structure) => {
-                            insert_package(structure, current_config, &mut client).unwrap();
+                            insert_usda_package(structure, current_config, &mut client).unwrap();
                         },
                         Err(e) => {
                             eprintln!("Failed to process datamart reponse: {}", e);
@@ -508,7 +575,7 @@ fn main() {
 
                 match result {
                     Ok(structure) => {
-                        insert_package(structure, current_config, &mut client).unwrap();
+                        insert_usda_package(structure, current_config, &mut client).unwrap();
                     },
                     Err(e) => {
                         eprintln!("Failed to process datamart reponse: {}", e);
@@ -573,7 +640,7 @@ fn main() {
 
                                     match result {
                                         Ok(structure) => {
-                                            insert_package(structure, current_config, &mut client).unwrap();
+                                            insert_usda_package(structure, current_config, &mut client).unwrap();
                                         },
                                         Err(e) => {
                                             eprintln!("Failed to process file: {}, error: {}", &release, e);
@@ -621,7 +688,7 @@ fn main() {
             
                     match result {
                         Ok(structure) => {
-                            insert_package(structure, current_config, &mut client).unwrap();
+                            insert_usda_package(structure, current_config, &mut client).unwrap();
                         },
                         Err(e) => {
                             eprintln!("Failed to process datamart reponse: {}", e);
@@ -640,13 +707,10 @@ fn main() {
         match noaa::retrieve_noaa_ftp() {
             Ok(cursor) => {
                 println!("Parsing NOAA data...");
-                match noaa::process_noaa(cursor, Some("TAVG".to_owned()), Some("US".to_owned())) {
+                match noaa::process_noaa(cursor, Some("TMAX".to_owned()), Some("US".to_owned())) {
                     Ok(structure) => {
-                        println!("Converting structure for insertion...");
-                        let converted_result = USDADataPackage::from(structure); // this eats all of your RAM and takes forever
-                        let noaa_config = common::noaa_structure();
                         println!("Inserting into database...");
-                        insert_package(converted_result, &noaa_config, &mut client).unwrap(); // mightly slow
+                        insert_noaa_package(structure, &mut client).unwrap();
                     },
                     Err(e) => {
                         eprintln!("Failed: {}", e);
