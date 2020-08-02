@@ -578,7 +578,7 @@ fn main() {
         match noaa::retrieve_noaa_ftp() {
             Ok(cursor) => {
                 println!("Parsing NOAA data...");
-                match noaa::process_noaa(cursor, Some("TMAX".to_owned()), Some("US".to_owned())) {
+                match noaa::process_noaa(cursor, Some(vec!["TMAX".to_owned()]), Some(vec!["US".to_owned()])) {
                     Ok(structure) => {
                         println!("Inserting into database...");
                         integration::noaa::insert_noaa_package(structure, &mut client).unwrap();

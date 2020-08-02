@@ -247,7 +247,9 @@ pub fn retrieve_noaa_ftp() -> Result<Cursor<Vec<u8>>, String> {
     Ok(cursor)
 }
 
-pub fn process_noaa<R: Read>(cursor: R, element_filter: Option<String>, station_country_filter: Option<String>) -> Result<Vec<Observation>, String> {   
+/// Parses a NOAA tar.gz file and returns an appropriate datastructure. The optional filters are logically processed with 
+/// case-sensitive "OR" logic with respect to other elements in the same vector, but "AND" logic with respect to the different filters.
+pub fn process_noaa<R: Read>(cursor: R, element_filter: Option<Vec<String>>, station_country_filter: Option<Vec<String>>) -> Result<Vec<Observation>, String> {   
     let tar = GzDecoder::new(cursor);
     match tar.header() {
         Some(_) => {},
@@ -300,18 +302,19 @@ pub fn process_noaa<R: Read>(cursor: R, element_filter: Option<String>, station_
             match record_result {
                 Ok(record) => {
                     match (element_filter.as_ref(), station_country_filter.as_ref()) {
-                        (Some(element), Some(country)) => {
-                            if *element == record.element && record.station_id.to_lowercase().starts_with(&country.to_lowercase()) {
-                                results.push(record);
+                        (Some(elements), Some(countries)) => {
+                            match (elements.iter().find(|&x| x == &record.element), countries.iter().find(|&x| x.to_lowercase().starts_with(x))) {
+                                (Some(_), Some(_)) =>  {results.push(record);}
+                                (_, _) => {}
                             }
                         },
-                        (None, Some(country)) => {
-                            if record.station_id.to_lowercase().starts_with(&country.to_lowercase()) {
+                        (None, Some(countries)) => {
+                            if countries.iter().any(|x| x.to_lowercase().starts_with(x)) {
                                 results.push(record);
                             }
                         }
-                        (Some(element), None) => {
-                            if *element == record.element {
+                        (Some(elements), None) => {
+                            if elements.iter().any(|x| *x == record.element) { 
                                 results.push(record);
                             }
                         }
@@ -360,7 +363,7 @@ AE000041196194404TMIN  180  I  180  I  163  I  146  I  135  I-9999   -9999     1
     let result = encoder.finish().unwrap();
     let cursor = Cursor::new(result);
 
-    let results = process_noaa(cursor, Some("TAVG".to_string()), Some("US".to_owned())).unwrap();
+    let results = process_noaa(cursor, Some(vec!["TAVG".to_string()]), Some(vec!["US".to_owned()])).unwrap();
     for observation in results {
         println!("{}", observation);
     }
