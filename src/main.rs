@@ -17,17 +17,16 @@ use postgres::types::ToSql;
 use rpassword::prompt_password_stdout;
 use walkdir::{WalkDir, DirEntry};
 
-mod common;
-use common::USDADataPackage;
-
-mod datamart;
-use datamart::{DatamartConfig};
+mod usda;
+use usda::USDADataPackage;
+use usda::datamart::DatamartConfig;
 
 mod esmis;
 use esmis::fetch_releases_by_identifier;
 
 mod noaa;
-mod legacy;
+mod integration;
+use integration::noaa::SUPPORTED_NOAA_ELEMENTS;
 
 fn command_usage<'a, 'b>() -> App<'a, 'b> {
     const DEFAULT_HOST: &str = "localhost";
@@ -224,7 +223,7 @@ fn create_table(name:String, independent: &[String], client: &mut postgres::Clie
 
 fn insert_noaa_package(observations: Vec<noaa::Observation>, client: &mut postgres::Client) -> Result<(), postgres::Error> {
     for observation in observations {
-        if !common::SUPPORTED_NOAA_ELEMENTS.contains(&(observation.element.as_str())) {
+        if !SUPPORTED_NOAA_ELEMENTS.contains(&(observation.element.as_str())) {
             println!("Skipping unsupported element: {}", observation.element);
             continue;
         }
@@ -287,7 +286,7 @@ fn insert_noaa_package(observations: Vec<noaa::Observation>, client: &mut postgr
     Ok(())
 }
 
-fn insert_usda_package(package: USDADataPackage, structure: &datamart::DatamartConfig, client: &mut postgres::Client) -> Result<usize, postgres::Error> {
+fn insert_usda_package(package: USDADataPackage, structure: &DatamartConfig, client: &mut postgres::Client) -> Result<usize, postgres::Error> {
     let report_name = package.name;
 
     for (section, results) in package.sections {
@@ -479,7 +478,7 @@ fn main() {
         }
 
         // NOAA
-        let noaa_structure = common::noaa_structure();
+        let noaa_structure = integration::noaa::noaa_structure();
         for (section_name, section_data) in noaa_structure.sections {
             match create_table(format!("{}_{}", "NOAA", section_name).to_owned(), &section_data.independent, &mut client) {
                 Ok(_) => {},
@@ -512,8 +511,8 @@ fn main() {
                         
                         let result = { 
                             match identifier.as_ref() {
-                                "LM_XB463" => {legacy::lmxb463_text_parse(report)},
-                                "DC_GR110" => {legacy::dcgr110_text_parse(report)},
+                                "LM_XB463" => {usda::legacy::lmxb463_text_parse(report)},
+                                "DC_GR110" => {usda::legacy::dcgr110_text_parse(report)},
                                 _ => {
                                     eprintln!("Unknown report type encountered: {}", identifier);
                                     continue;
@@ -543,13 +542,13 @@ fn main() {
     }
 
     if matches.is_present("backfill-datamart") {
-        match datamart::check_datamart() {
+        match usda::datamart::check_datamart() {
             Ok(_) => {
                 for slug in datamart_config.keys() {
                     let http_connect_timeout = http_connect_timeout.clone();
                     let http_receive_timeout = http_receive_timeout.clone();
 
-                    let result = datamart::process_datamart(slug.to_owned(), None, &datamart_config, http_connect_timeout, http_receive_timeout, None);
+                    let result = usda::datamart::process_datamart(slug.to_owned(), None, &datamart_config, http_connect_timeout, http_receive_timeout, None);
                     let current_config = datamart_config.get(slug).unwrap();
 
                     match result {
@@ -567,10 +566,10 @@ fn main() {
             }
         }
     } else if matches.is_present("slug") {
-        match datamart::check_datamart() {
+        match usda::datamart::check_datamart() {
             Ok(_) => {
                 let slug = matches.value_of("slug").unwrap();
-                let result = datamart::process_datamart(slug.to_owned(), None, &datamart_config, http_connect_timeout, http_receive_timeout, None);
+                let result = usda::datamart::process_datamart(slug.to_owned(), None, &datamart_config, http_connect_timeout, http_receive_timeout, None);
                 let current_config = datamart_config.get(slug).unwrap();
 
                 match result {
@@ -629,8 +628,8 @@ fn main() {
                                 } else {
                                     let result = { 
                                         match *identifier {
-                                            "LM_XB463" => {legacy::lmxb463_text_parse(response.into_string().unwrap())},
-                                            "DC_GR110" => {legacy::dcgr110_text_parse(response.into_string().unwrap())},
+                                            "LM_XB463" => {usda::legacy::lmxb463_text_parse(response.into_string().unwrap())},
+                                            "DC_GR110" => {usda::legacy::dcgr110_text_parse(response.into_string().unwrap())},
                                             _ => {
                                                 eprintln!("Unknown report type encountered: {}", identifier);
                                                 continue;
@@ -658,7 +657,7 @@ fn main() {
             };
         }
         
-        match datamart::check_datamart() {
+        match usda::datamart::check_datamart() {
             Ok(_) => {
                 for slug in datamart_config.keys() {
                     let http_connect_timeout = http_connect_timeout.clone();
@@ -683,7 +682,7 @@ fn main() {
 
                     println!("Current maximum date for {} is {}. Requesting new data.", current_config.name, maximum_existing_date);
 
-                    let result = datamart::process_datamart(slug.to_owned(), None, &datamart_config, http_connect_timeout, http_receive_timeout, Some(maximum_existing_date));
+                    let result = usda::datamart::process_datamart(slug.to_owned(), None, &datamart_config, http_connect_timeout, http_receive_timeout, Some(maximum_existing_date));
                     let current_config = datamart_config.get(slug).unwrap();
             
                     match result {

@@ -1,44 +1,10 @@
-use std::collections::{HashMap, HashSet};
-use std::convert::TryInto;
-
-use chrono::NaiveDate;
 use crate::noaa;
-use crate::datamart;
+use crate::usda;
+use crate::usda::{USDADataPackage, USDADataPackageSection};
 
-#[derive(Debug)]
-pub struct USDADataPackageSection {
-    pub report_date: NaiveDate,
-    pub independent: Vec<String>,
-    pub entries: HashMap<String, String>
-}
-
-impl USDADataPackageSection {
-    pub fn new(report_date: NaiveDate) -> USDADataPackageSection {
-        USDADataPackageSection {
-            report_date,
-            independent: Vec::new(),
-            entries: HashMap::new()
-        }
-    }
-}
-
-#[derive(Debug)]
-pub struct USDADataPackage {
-    pub name: String,
-    pub sections: HashMap<
-        String, // section name
-        Vec<USDADataPackageSection>
-    >,
-}
-
-impl USDADataPackage {
-    pub fn new(name: String) -> USDADataPackage {
-        USDADataPackage {
-            name,
-            sections: HashMap::new(),
-        }
-    }
-}
+use std::collections::{HashMap, HashSet};
+use chrono::NaiveDate;
+use std::convert::TryInto;
 
 lazy_static! {
     pub static ref SUPPORTED_NOAA_ELEMENTS: HashSet<&'static str> = [
@@ -171,10 +137,11 @@ AE000041196194404TMIN  180  I  180  I  163  I  146  I  135  I-9999   -9999     1
 }
 
 /// A translation of the NOAA structure for the data-acquistion project
-pub fn noaa_structure() -> datamart::DatamartConfig {
-    let mut sections: HashMap<String, datamart::DatamartSection> = HashMap::new();
+pub fn noaa_structure() -> usda::datamart::DatamartConfig {
+    let mut sections: HashMap<String, usda::datamart::DatamartSection> = HashMap::new();
     for element in SUPPORTED_NOAA_ELEMENTS.iter() {
-        let section = datamart::DatamartSection {
+        let section = usda::datamart::DatamartSection {
+            alias: None,
             independent: vec!["report_date".to_owned(), "station_id".to_owned()],
             fields: vec![
                 "measure_flag".to_owned(), "source_flag".to_owned(), 
@@ -184,7 +151,7 @@ pub fn noaa_structure() -> datamart::DatamartConfig {
         sections.entry(String::from(*element)).or_insert(section);
     }
 
-    datamart::DatamartConfig {
+    usda::datamart::DatamartConfig {
         name: "NOAA".to_owned(),
         description: "National Oceanic and Atmospheric Administration Weather Data".to_owned(),
         independent: "report_date".to_owned(),

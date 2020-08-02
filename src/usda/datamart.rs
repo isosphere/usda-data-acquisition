@@ -5,10 +5,11 @@ use chrono::{NaiveDate, Local};
 use regex::Regex;
 use serde::Deserialize;
 
-use crate::common::{USDADataPackage, USDADataPackageSection};
+use super::{USDADataPackage, USDADataPackageSection};
 
 #[derive(Deserialize, Debug)]
 pub struct DatamartSection {
+    pub alias: Option<String>,    // if present, will be used instead of hash key for table name
     pub independent: Vec<String>, // first is always interpreted as a NaiveDate, following are text.
     pub fields: Vec<String>       // all will be attempted as numeric
 }
