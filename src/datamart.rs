@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use chrono::{NaiveDate, Local};
 use regex::Regex;
-use serde::Deserialize; 
+use serde::Deserialize;
 
 use crate::common::{USDADataPackage, USDADataPackageSection};
 
@@ -147,7 +147,7 @@ pub fn process_datamart(slug_id: String, report_date:Option<NaiveDate>, config: 
                                     x.name("year").unwrap().as_str().parse::<i32>().unwrap(),
                                     x.name("month").unwrap().as_str().parse::<u32>().unwrap(),
                                     x.name("day").unwrap().as_str().parse::<u32>().unwrap()
-                                )                        
+                                )
                             },
                             None => {
                                 return Err(format!("Failed to parse independent column from datamart response: {}", independent))
