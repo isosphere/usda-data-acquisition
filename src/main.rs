@@ -575,10 +575,10 @@ fn main() {
 
     if matches.is_present("backfill-noaa") {
         println!("Fetching NOAA data...");
-        match noaa::retrieve_noaa_ftp() {
+        match noaa::retrieve_noaa_ftp("matt@dataheck.com") {
             Ok(cursor) => {
                 println!("Parsing NOAA data...");
-                match noaa::process_noaa(cursor, Some(vec!["TMAX".to_owned()]), Some(vec!["US".to_owned()])) {
+                match noaa::process_noaa(cursor, Some(vec!["TMAX"]), Some(vec!["US"])) {
                     Ok(structure) => {
                         println!("Inserting into database...");
                         integration::noaa::insert_noaa_package(structure, &mut client).unwrap();

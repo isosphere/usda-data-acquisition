@@ -180,18 +180,18 @@ pub struct Observation {
 impl FixedWidth for Observation {
     fn fields() -> Vec<Field> {
         let mut field_vec = vec![
-            Field::default().range(0..11),
-            Field::default().range(11..15),
-            Field::default().range(15..17),
-            Field::default().range(17..21)
+            Field::default().range(0..11),  // station ID
+            Field::default().range(11..15), // year
+            Field::default().range(15..17), // month
+            Field::default().range(17..21)  // element
         ];
 
         let mut index = 21;
         for _ in 0..31 {
-            field_vec.push(Field::default().range(index..index+5)); // value
-            field_vec.push(Field::default().range(index+5..index+6)); // m flag
-            field_vec.push(Field::default().range(index+6..index+7)); // q flag
-            field_vec.push(Field::default().range(index+7..index+8)); // s flag
+            field_vec.push(Field::default().range(index..index+5));   // value
+            field_vec.push(Field::default().range(index+5..index+6)); // measure flag
+            field_vec.push(Field::default().range(index+6..index+7)); // quality flag
+            field_vec.push(Field::default().range(index+7..index+8)); // source flag
             index += 8;
         }
 
@@ -211,7 +211,8 @@ impl fmt::Display for Observation {
     }
 }
 
-pub fn retrieve_noaa_ftp() -> Result<Cursor<Vec<u8>>, String> {
+/// Retrieve NOAA GHCND GSN archive, identifying ourselves with "email"
+pub fn retrieve_noaa_ftp(email: &str) -> Result<Cursor<Vec<u8>>, String> {
     let mut ftp_stream = {
         match FtpStream::connect("ftp.ncdc.noaa.gov:21") {
             Ok(stream) => { stream },
@@ -221,7 +222,7 @@ pub fn retrieve_noaa_ftp() -> Result<Cursor<Vec<u8>>, String> {
         }
     };
 
-    match ftp_stream.login("anonymous", "matt@dataheck.com") {
+    match ftp_stream.login("anonymous", &email) {
         Ok(_) => {},
         Err(e) => {
             return Err(e.to_string())
@@ -248,8 +249,8 @@ pub fn retrieve_noaa_ftp() -> Result<Cursor<Vec<u8>>, String> {
 }
 
 /// Parses a NOAA tar.gz file and returns an appropriate datastructure. The optional filters are logically processed with 
-/// case-sensitive "OR" logic with respect to other elements in the same vector, but "AND" logic with respect to the different filters.
-pub fn process_noaa<R: Read>(cursor: R, element_filter: Option<Vec<String>>, station_country_filter: Option<Vec<String>>) -> Result<Vec<Observation>, String> {   
+/// case-insensitive "OR" logic with respect to other elements in the same vector, but "AND" logic with respect to the different filters.
+pub fn process_noaa<R: Read>(cursor: R, element_filter: Option<Vec<&str>>, station_country_filter: Option<Vec<&str>>) -> Result<Vec<Observation>, String> {   
     let tar = GzDecoder::new(cursor);
     match tar.header() {
         Some(_) => {},
@@ -303,18 +304,21 @@ pub fn process_noaa<R: Read>(cursor: R, element_filter: Option<Vec<String>>, sta
                 Ok(record) => {
                     match (element_filter.as_ref(), station_country_filter.as_ref()) {
                         (Some(elements), Some(countries)) => {
-                            match (elements.iter().find(|&x| x == &record.element), countries.iter().find(|&x| x.to_lowercase().starts_with(x))) {
-                                (Some(_), Some(_)) =>  {results.push(record);}
+                            match (
+                                elements.iter().any(|&x| x.to_lowercase() == record.element.to_lowercase()),
+                                countries.iter().any(|&x| record.station_id.to_lowercase().starts_with(&x.to_lowercase()))
+                            ) {
+                                (true, true) =>  {results.push(record);}
                                 (_, _) => {}
                             }
                         },
                         (None, Some(countries)) => {
-                            if countries.iter().any(|x| x.to_lowercase().starts_with(x)) {
+                            if countries.iter().any(|x| record.station_id.to_lowercase().starts_with(x)) {
                                 results.push(record);
                             }
                         }
                         (Some(elements), None) => {
-                            if elements.iter().any(|x| *x == record.element) { 
+                            if elements.iter().any(|x| *x.to_lowercase() == record.element.to_lowercase()) { 
                                 results.push(record);
                             }
                         }
@@ -342,8 +346,8 @@ fn test_process_noaa() {
 
     // note: this data is made up so that we see a variety in the response, so don't worry about weird flags
     let test_string = r#"AE000041196194403TAVG-9999   -9999   -9999   -9999   -9999   -9999   -9999   -9999   -9999   -9999   -9999   -9999   -9999   -9999   -9999   -9999   -9999   -9999   -9999     292H S  274H S  242H S  250H S  263H S  257H S  233H S  239H S  217H S  245H S  292H S  260H S
-AE000041196194404TMAX  258  I  263  I  258  I  263  I  296  I  302  I  358  I  391  I  380  I  308  I  291  I  274  I  280  I  369  I  330 KI  335B I  385  I  385  I  374  I  374  I  313  I  308  I  308  I  302  I  313  I  330  I  335  I  302  I  313  I  346  I-9999   
-AE000041196194404TMIN  180  I  180  I  163  I  146  I  135  I-9999   -9999     196  I  235  I  213  I  163  I-9999     180  I  174  I-9999     196  I  241  I  235  I  208  I  196  I  208  I  213  I  180  I  174  I  180  I  180  I  169  I  152  I  169  I  169  I-9999   
+CA000041196194404TMAX  258  I  263  I  258  I  263  I  296  I  302  I  358  I  391  I  380  I  308  I  291  I  274  I  280  I  369  I  330 KI  335B I  385  I  385  I  374  I  374  I  313  I  308  I  308  I  302  I  313  I  330  I  335  I  302  I  313  I  346  I-9999   
+US000041196194404TMIN  180  I  180  I  163  I  146  I  135  I-9999   -9999     196  I  235  I  213  I  163  I-9999     180  I  174  I-9999     196  I  241  I  235  I  208  I  196  I  208  I  213  I  180  I  174  I  180  I  180  I  169  I  152  I  169  I  169  I-9999   
 "#;
 
     let cursor = Cursor::new(test_string);
@@ -361,10 +365,12 @@ AE000041196194404TMIN  180  I  180  I  163  I  146  I  135  I-9999   -9999     1
     encoder.write_all(&archive[..]).unwrap();
 
     let result = encoder.finish().unwrap();
+    
     let cursor = Cursor::new(result);
-
-    let results = process_noaa(cursor, Some(vec!["TAVG".to_string()]), Some(vec!["US".to_owned()])).unwrap();
+    let results = process_noaa(cursor, Some(vec!["TAVG"]), Some(vec!["AE"])).unwrap();
+    assert_eq!(results.len(), 1);
     for observation in results {
-        println!("{}", observation);
+        assert_eq!(observation.station_id.starts_with("AE"), true);
+        assert_eq!(observation.element, "TAVG");
     }
 }
