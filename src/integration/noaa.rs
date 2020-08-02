@@ -163,3 +163,68 @@ pub fn noaa_structure() -> usda::datamart::DatamartConfig {
 fn test_noaa_structure() {
     println!("{:?}", noaa_structure())
 }
+
+pub fn insert_noaa_package(observations: Vec<noaa::Observation>, client: &mut postgres::Client) -> Result<(), postgres::Error> {
+    for observation in observations {
+        if !SUPPORTED_NOAA_ELEMENTS.contains(&(observation.element.as_str())) {
+            println!("Skipping unsupported element: {}", observation.element);
+            continue;
+        }
+
+        let table_name = format!("noaa_{}", observation.element).to_owned();
+        let sql = format!(r#"
+            INSERT INTO {table_name} (report_date, station_id, variable_name, value, value_text) VALUES($1, $2, $3, $4, $5)
+            ON CONFLICT ON CONSTRAINT {table_name}_pkeys DO NOTHING
+        "#, table_name=&table_name).to_owned();
+
+        //println!("{}", sql);
+        
+        let statement = client.prepare(&sql).unwrap();
+
+        for (day, data) in observation.observations.iter().enumerate() {
+            // if the value is empty, don't bother with this record
+            let value_string = match data.value.as_ref() {
+                Some(v) => { v.to_string() },
+                None => { continue }
+            };
+
+            let this_date = NaiveDate::from_ymd(
+                observation.year.try_into().unwrap(),
+                observation.month.try_into().unwrap(),
+                (day + 1).try_into().unwrap()
+            );
+            
+            let measure_string = match data.measure_flag.as_ref() {
+                Some(v) => {v.to_string()},
+                None => {"".to_owned()}
+            };
+            
+            let quality_string = match data.quality_flag.as_ref() {
+                Some(v) => { v.to_string() },
+                None => {"".to_owned()}
+            };
+
+            let empty_value: Option<f32> = None;
+
+            client.execute(&statement, &[
+                &this_date, &observation.station_id, &"quality_flag".to_owned(), &empty_value, &quality_string
+            ])?;
+            client.execute(&statement, &[
+                &this_date, &observation.station_id, &"source_flag".to_owned(), &empty_value, &data.source_flag
+            ])?;
+            client.execute(&statement, &[
+                &this_date, &observation.station_id, &"measure_flag".to_owned(), &empty_value, &measure_string
+            ])?;
+
+            let value_numeric: Option<f32> = match data.value.as_ref() {
+                Some(v) => {Some(*v as f32)},
+                None => {None}
+            };
+
+            client.execute(&statement, &[
+                &this_date, &observation.station_id, &"value".to_owned(), &value_numeric, &value_string
+            ])?;
+        }
+    }
+    Ok(())
+}

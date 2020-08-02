@@ -1,9 +1,8 @@
 use std::collections::HashMap;
-use std::convert::TryInto;
 use std::fs;
 use std::sync::Arc;
 
-#[macro_use] 
+#[macro_use]
 extern crate lazy_static;
 extern crate toml;
 extern crate serde;
@@ -12,13 +11,11 @@ extern crate ureq;
 use clap::{Arg, App};
 use chrono::{Local, NaiveDate, Duration};
 use postgres::{Config, NoTls};
-use postgres::types::ToSql;
 
 use rpassword::prompt_password_stdout;
 use walkdir::{WalkDir, DirEntry};
 
 mod usda;
-use usda::USDADataPackage;
 use usda::datamart::DatamartConfig;
 
 mod esmis;
@@ -26,7 +23,6 @@ use esmis::fetch_releases_by_identifier;
 
 mod noaa;
 mod integration;
-use integration::noaa::SUPPORTED_NOAA_ELEMENTS;
 
 fn command_usage<'a, 'b>() -> App<'a, 'b> {
     const DEFAULT_HOST: &str = "localhost";
@@ -220,130 +216,6 @@ fn create_table(name:String, independent: &[String], client: &mut postgres::Clie
     Ok(0)
 }
 
-
-fn insert_noaa_package(observations: Vec<noaa::Observation>, client: &mut postgres::Client) -> Result<(), postgres::Error> {
-    for observation in observations {
-        if !SUPPORTED_NOAA_ELEMENTS.contains(&(observation.element.as_str())) {
-            println!("Skipping unsupported element: {}", observation.element);
-            continue;
-        }
-
-        let table_name = format!("noaa_{}", observation.element).to_owned();
-        let sql = format!(r#"
-            INSERT INTO {table_name} (report_date, station_id, variable_name, value, value_text) VALUES($1, $2, $3, $4, $5)
-            ON CONFLICT ON CONSTRAINT {table_name}_pkeys DO NOTHING
-        "#, table_name=&table_name).to_owned();
-
-        //println!("{}", sql);
-        
-        let statement = client.prepare(&sql).unwrap();
-
-        for (day, data) in observation.observations.iter().enumerate() {
-            // if the value is empty, don't bother with this record
-            let value_string = match data.value.as_ref() {
-                Some(v) => { v.to_string() },
-                None => { continue }
-            };
-
-            let this_date = NaiveDate::from_ymd(
-                observation.year.try_into().unwrap(),
-                observation.month.try_into().unwrap(),
-                (day + 1).try_into().unwrap()
-            );
-            
-            let measure_string = match data.measure_flag.as_ref() {
-                Some(v) => {v.to_string()},
-                None => {"".to_owned()}
-            };
-            
-            let quality_string = match data.quality_flag.as_ref() {
-                Some(v) => { v.to_string() },
-                None => {"".to_owned()}
-            };
-
-            let empty_value: Option<f32> = None;
-
-            client.execute(&statement, &[
-                &this_date, &observation.station_id, &"quality_flag".to_owned(), &empty_value, &quality_string
-            ])?;
-            client.execute(&statement, &[
-                &this_date, &observation.station_id, &"source_flag".to_owned(), &empty_value, &data.source_flag
-            ])?;
-            client.execute(&statement, &[
-                &this_date, &observation.station_id, &"measure_flag".to_owned(), &empty_value, &measure_string
-            ])?;
-
-            let value_numeric: Option<f32> = match data.value.as_ref() {
-                Some(v) => {Some(*v as f32)},
-                None => {None}
-            };
-
-            client.execute(&statement, &[
-                &this_date, &observation.station_id, &"value".to_owned(), &value_numeric, &value_string
-            ])?;
-        }
-    }
-    Ok(())
-}
-
-fn insert_usda_package(package: USDADataPackage, structure: &DatamartConfig, client: &mut postgres::Client) -> Result<usize, postgres::Error> {
-    let report_name = package.name;
-
-    for (section, results) in package.sections {
-        // Dynamic statement preparation
-        // warning: this SQL construction is sensitive magic and prone to breaking
-        let table_name = format!("{}_{}", report_name, section).to_owned();
-        let independent = &structure.sections[&section].independent;
-        let mut sql = format!(r#"INSERT INTO {table_name} (report_date, "#, table_name=&table_name).to_owned();
-        
-        for column in &independent[1..] {
-            sql.push_str(&format!("\"{}\", ", column));
-        }
-        sql.push_str("variable_name, value, value_text) VALUES(");
-        for i in 1..=independent.len()+3 {
-            sql.push_str(&format!("${},", i));
-        }
-        sql.pop();
-        sql.push_str(&format!(") ON CONFLICT ON CONSTRAINT {table_name}_pkeys DO NOTHING", table_name=table_name));
-
-        //println!("{}", sql);
-        
-        let statement = client.prepare(&sql).unwrap();
-        
-        // Data processing and insertion
-        for usda_package in results {
-            let report_date = usda_package.report_date;
-            let independent = &usda_package.independent;
-
-            for (key, value) in usda_package.entries {
-                let value_numeric = {
-                    let temp = value.replace(",", "");
-                    match temp.parse::<f32>() {
-                        Ok(v) => { Some(v) },
-                        Err(_) => { None }
-                    }
-                };
-                if !value.is_empty() {
-                    let mut params: Vec<&(dyn ToSql + Sync)> = Vec::new(); // this is some kind of magic that i do not yet understand
-                    
-                    params.push(&report_date);
-                    for column in &independent[1..] {
-                        params.push(column);
-                    }
-                    params.push(&key);
-                    params.push(&value_numeric);
-                    params.push(&value);
-
-                    //println!("{:?}", params);
-
-                    client.execute(&statement, &params[..]).unwrap();
-                }
-            }
-        }
-    }
-    Ok(0)
-}
-
 fn report_filter(entry: &DirEntry) -> bool {
     let is_folder = entry.file_type().is_dir();
     let file_name = entry.file_name().to_str().unwrap();
@@ -522,7 +394,7 @@ fn main() {
         
                         match result {
                             Ok(structure) => {
-                                insert_usda_package(structure, current_config, &mut client).unwrap();
+                                integration::usda::insert_usda_package(structure, current_config, &mut client).unwrap();
                                 println!("{} processed and inserted.", &path);
                             },
                             Err(e) => {
@@ -553,7 +425,7 @@ fn main() {
 
                     match result {
                         Ok(structure) => {
-                            insert_usda_package(structure, current_config, &mut client).unwrap();
+                            integration::usda::insert_usda_package(structure, current_config, &mut client).unwrap();
                         },
                         Err(e) => {
                             eprintln!("Failed to process datamart reponse: {}", e);
@@ -574,7 +446,7 @@ fn main() {
 
                 match result {
                     Ok(structure) => {
-                        insert_usda_package(structure, current_config, &mut client).unwrap();
+                        integration::usda::insert_usda_package(structure, current_config, &mut client).unwrap();
                     },
                     Err(e) => {
                         eprintln!("Failed to process datamart reponse: {}", e);
@@ -639,7 +511,7 @@ fn main() {
 
                                     match result {
                                         Ok(structure) => {
-                                            insert_usda_package(structure, current_config, &mut client).unwrap();
+                                            integration::usda::insert_usda_package(structure, current_config, &mut client).unwrap();
                                         },
                                         Err(e) => {
                                             eprintln!("Failed to process file: {}, error: {}", &release, e);
@@ -687,7 +559,7 @@ fn main() {
             
                     match result {
                         Ok(structure) => {
-                            insert_usda_package(structure, current_config, &mut client).unwrap();
+                            integration::usda::insert_usda_package(structure, current_config, &mut client).unwrap();
                         },
                         Err(e) => {
                             eprintln!("Failed to process datamart reponse: {}", e);
@@ -709,7 +581,7 @@ fn main() {
                 match noaa::process_noaa(cursor, Some("TMAX".to_owned()), Some("US".to_owned())) {
                     Ok(structure) => {
                         println!("Inserting into database...");
-                        insert_noaa_package(structure, &mut client).unwrap();
+                        integration::noaa::insert_noaa_package(structure, &mut client).unwrap();
                     },
                     Err(e) => {
                         eprintln!("Failed: {}", e);
