@@ -178,12 +178,12 @@ pub fn process_datamart(slug_id: String, report_date:Option<NaiveDate>, config: 
                                 match v.as_ref() {
                                     Some(v) => { v },
                                     None => {
-                                        return Err(format!("Failed to get value of independent column `{}` in response. All columns: {:#?}", column, entry.keys()));
+                                        return Err(format!("Failed to get value of independent column `{}` in response for date {}. All columns: {:#?}", column, independent, entry.keys()));
                                     }
                                 }
                             }
                             None => {
-                                return Err(format!("Failed to find independent column `{}` in response. All columns: {:#?}", column, entry.keys()));
+                                return Err(format!("Failed to find independent column `{}` in response for date {}. All columns: {:#?}", column, independent, entry.keys()));
                             }
                         };
                         
