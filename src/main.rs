@@ -381,21 +381,25 @@ fn main() {
     }
 
     if matches.is_present("backfill-datamart") {
+        println!("Fetching all available data for all configured datamart reports.");
         match usda::datamart::check_datamart() {
             Ok(_) => {
                 for slug in datamart_config.keys() {
+                    println!("Fetching {}", slug);
                     let http_connect_timeout = http_connect_timeout.clone();
                     let http_receive_timeout = http_receive_timeout.clone();
 
                     let result = usda::datamart::process_datamart(slug.to_owned(), None, &datamart_config, http_connect_timeout, http_receive_timeout, None);
                     let current_config = datamart_config.get(slug).unwrap();
 
+                    println!("Data fetched. Inserting.");
                     match result {
                         Ok(structure) => {
                             integration::usda::insert_usda_package(structure, current_config, &mut client).unwrap();
+                            println!("Done.");
                         },
                         Err(e) => {
-                            eprintln!("Failed to process datamart reponse: {}", e);
+                            eprintln!("Failed to process datamart reponse for slug {}: {}", slug, e);
                         }
                     }
                 }
