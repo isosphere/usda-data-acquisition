@@ -2,13 +2,19 @@ use crate::usda::USDADataPackage;
 use crate::usda::datamart::DatamartConfig;
 use postgres::types::ToSql;
 
+use chrono::NaiveDate;
+
 pub fn insert_usda_package(package: USDADataPackage, structure: &DatamartConfig, client: &mut postgres::Client) -> Result<usize, postgres::Error> {
     let report_name = package.name;
 
     for (section, results) in package.sections {
         // Dynamic statement preparation
         // warning: this SQL construction is sensitive magic and prone to breaking
-        let table_name = format!("{}_{}", report_name, section).to_owned();
+        let table_name = match &structure.sections[&section].alias {
+            Some(alias) => {format!("{}_{}", report_name, alias).to_owned()},
+            None => {format!("{}_{}", report_name, section).to_owned()}
+        }.to_lowercase();
+
         let independent = &structure.sections[&section].independent;
         let mut sql = format!(r#"INSERT INTO {table_name} (report_date, "#, table_name=&table_name).to_owned();
         
@@ -58,4 +64,50 @@ pub fn insert_usda_package(package: USDADataPackage, structure: &DatamartConfig,
         }
     }
     Ok(0)
+}
+
+pub fn find_maximum_existing_datamart_date(current_config: &DatamartConfig, client: &mut postgres::Client) -> Result<NaiveDate, String> {
+    let mut max_date_found: Option<NaiveDate> = None;
+
+    for section in current_config.sections.keys() {
+        let table_name = match &current_config.sections[section].alias {
+            Some(alias) => {format!("{}_{}", current_config.name, alias).to_owned()},
+            None => {format!("{}_{}", current_config.name, section).to_owned()}
+        }.to_lowercase();
+
+        let sql = format!("SELECT MAX(report_date) FROM {}", table_name);
+        let statement = match client.prepare(&sql) {
+            Ok(s) => {s},
+            Err(e) => {
+                return Err(format!("Failed to prepare statement: `{}`, error: `{}`", sql, e))
+            }
+        };
+    
+        let row = client.query_one(&statement, &[]);
+
+        match row {
+            Ok(v) => { 
+                let value: Option<NaiveDate> = v.get(0);
+
+                match (max_date_found, value) {
+                    (Some(date), Some(value)) => {
+                        if date < value {
+                            max_date_found = Some(value);
+                        }
+                    },
+                    (None, Some(value)) => {max_date_found = Some(value);},
+                    (Some(_), None) => {},
+                    (None, None) => {}
+                }
+            },
+            Err(_) => {
+                return Err(format!("Failed to obtain latest data for {}, aborting.", table_name))
+            }
+        }
+    }
+
+    match max_date_found {
+        Some(d) => { Ok(d) },
+        None => { Err(String::from("No date found"))}
+    }
 }

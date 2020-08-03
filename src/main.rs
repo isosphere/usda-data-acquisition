@@ -140,44 +140,6 @@ fn command_usage<'a, 'b>() -> App<'a, 'b> {
     )
 }
 
-fn find_maximum_existing_date(current_config: &DatamartConfig, client: &mut postgres::Client) -> Result<NaiveDate, String> {
-    let mut max_date_found: Option<NaiveDate> = None;
-
-    for section in current_config.sections.keys() {
-        let table_name = format!("{}_{}", current_config.name, section).to_lowercase();
-
-        let sql = format!("SELECT MAX(report_date) FROM {}", table_name);
-        let statement = client.prepare(&sql).unwrap();
-    
-        let row = client.query_one(&statement, &[]);
-
-        match row {
-            Ok(v) => { 
-                let value: Option<NaiveDate> = v.get(0);
-
-                match (max_date_found, value) {
-                    (Some(date), Some(value)) => {
-                        if date < value {
-                            max_date_found = Some(value);
-                        }
-                    },
-                    (None, Some(value)) => {max_date_found = Some(value);},
-                    (Some(_), None) => {},
-                    (None, None) => {}
-                }
-            },
-            Err(_) => {
-                return Err(format!("Failed to obtain latest data for {}, aborting.", table_name))
-            }
-        }
-    }
-
-    match max_date_found {
-        Some(d) => { Ok(d) },
-        None => { Err(String::from("No date found"))}
-    }
-}
-
 fn prepare_client(host: Arc<String>, port: Arc<u16>, user: Arc<String>, dbname: Arc<String>, password: Arc<String>) -> postgres::Client {
     Config::new()
         .host(&host)
@@ -342,7 +304,12 @@ fn main() {
             let report_name = &current_config.name;
 
             for (section_name, section_data) in &datamart_config.get(slug).unwrap().sections {
-                match create_table(format!("{}_{}", report_name, section_name).to_owned(), &section_data.independent, &mut client) {
+                let table_name = match &current_config.sections[section_name].alias {
+                    Some(alias) => {format!("{}_{}", report_name, alias).to_owned()},
+                    None => {format!("{}_{}", report_name, section_name).to_owned()}
+                }.to_lowercase();
+
+                match create_table(table_name, &section_data.independent, &mut client) {
                     Ok(_) => {},
                     Err(e) => {eprintln!("Failed to create table {}_{}: {}", report_name, section_name, e)}
                 }
@@ -438,15 +405,18 @@ fn main() {
             }
         }
     } else if matches.is_present("slug") {
+        let slug = matches.value_of("slug").unwrap();
+        println!("Fetching all available data for datamart report with slug {}", slug);
         match usda::datamart::check_datamart() {
             Ok(_) => {
-                let slug = matches.value_of("slug").unwrap();
                 let result = usda::datamart::process_datamart(slug.to_owned(), None, &datamart_config, http_connect_timeout, http_receive_timeout, None);
+                println!("Data fetched. Inserting.");
                 let current_config = datamart_config.get(slug).unwrap();
 
                 match result {
                     Ok(structure) => {
                         integration::usda::insert_usda_package(structure, current_config, &mut client).unwrap();
+                        println!("Done.");
                     },
                     Err(e) => {
                         eprintln!("Failed to process datamart reponse: {}", e);
@@ -468,7 +438,7 @@ fn main() {
             let http_receive_timeout_inner = http_receive_timeout.clone();
 
             let maximum_existing_date = {
-                match find_maximum_existing_date(&current_config, &mut client) {
+                match integration::usda::find_maximum_existing_datamart_date(&current_config, &mut client) {
                     Ok(v) => {
                         v
                     },
@@ -537,7 +507,7 @@ fn main() {
                     let current_config = datamart_config.get(slug).unwrap();
 
                     let maximum_existing_date = {
-                        match find_maximum_existing_date(&current_config, &mut client) {
+                        match integration::usda::find_maximum_existing_datamart_date(&current_config, &mut client) {
                             Ok(v) => {
                                 v
                             },

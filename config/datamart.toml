@@ -21,6 +21,9 @@ independent = "report_date_end"
         [2659.sections.Summary]
         independent = ["report_date_end", "purchase_type_desc", "selling_basis_desc"]
         fields = ["current_volume"]
+        [2659.sections.Detail]
+        independent = ["report_date_end", "purchase_type_code", "selling_basis_description", "class_description", "grade_description"]
+        fields = ["head_count", "weight_range_low", "weight_range_high", "weight_range_avg", "wtd_avg_dress_pct", "price_range_low", "price_range_high", "weighted_avg_price"]
 
 [2472]
 name = "lm_ct142"
@@ -58,23 +61,28 @@ description = "NATIONAL WEEKLY DIRECT SLAUGHTER CATTLE - PRIOR WEEK SLAUGHTER AN
 independent = "report_date"
     [2480.sections]
         [2480.sections."A. Packer Owned Slaughter"]
+        alias = "packer_owned_slaughter"
         independent = ["report_date", "source_desc"]
         fields = ["head_count", "weight_low", "weight_high", "weight_avg", "dress_pct", "pct_choice", "pct_yg"]
         [2480.sections."B. Prior Week Formula & Contract Slaughter"]
+        alias = "prior_week_formula_contract_slaughter"
         independent = ["report_date"]
         fields = [
             "B_dom_forward_head_count", "B_dom_formula_head_count", "B_dom_neg_head_count", "B_dom_neg_grid_head_count",
             "B_imp_forward_head_count", "B_imp_formula_head_count", "B_imp_neg_head_count", "B_imp_neg_grid_head_count"
         ]
         [2480.sections."C. Forward Contract Purchases"]
+        alias = "forward_contract_purchases"
         independent = ["report_date"]
         fields = ["C_weekly_head_count", "C_cumulative_head_count"]
         [2480.sections."C. Forward Contract Purchases Breakdown"]
+        alias = "forward_contract_purchases_breakdown"
         independent = ["report_date", "left_title"]
         fields = ["new_last_week", "cumulative_total_for_month", "basis_wtd_avg", "basis_min", "basis_max"]
         [2480.sections."D. Basis Distribution"]
-        independent = ["report_date", "del_basis_month_desc", "basis_level"]
-        fields = ["head_count"]
+        alias = "basis_distribution"
+        independent = ["report_date", "del_basis_month_desc", ]
+        fields = ["head_count", "basis_level"]
 
 [2481]
 name = "lm_ct154"

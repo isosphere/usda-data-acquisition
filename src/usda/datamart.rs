@@ -64,7 +64,11 @@ pub fn process_datamart(slug_id: String, report_date:Option<NaiveDate>, config: 
         return Err(format!("Slug ID {} is not known to our datamart configuration.", slug_id));
     }
 
-    let report_label = &config.get(&slug_id).unwrap().name;
+    let report_label = match &config.get(&slug_id) {
+        Some(v) => {&v.name},
+        None => {return Err(format!("Unable to find slug ID in configuration: {}", slug_id))}
+    };
+
     let mut result = USDADataPackage::new(report_label.to_owned());
 
     for section in config[&slug_id].sections.keys() {
@@ -169,7 +173,20 @@ pub fn process_datamart(slug_id: String, report_date:Option<NaiveDate>, config: 
                     }
 
                     for column in &config[&slug_id].sections[section].independent {
-                        let value = entry.get(column).unwrap().as_ref().unwrap();
+                        let value = match entry.get(column) {
+                            Some(v) => {
+                                match v.as_ref() {
+                                    Some(v) => { v },
+                                    None => {
+                                        return Err(format!("Failed to get value of independent column `{}` in response. All columns: {:#?}", column, entry.keys()));
+                                    }
+                                }
+                            }
+                            None => {
+                                return Err(format!("Failed to find independent column `{}` in response. All columns: {:#?}", column, entry.keys()));
+                            }
+                        };
+                        
                         data.independent.push(value.to_owned());
                     }
 
