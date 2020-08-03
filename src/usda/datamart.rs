@@ -122,13 +122,18 @@ pub fn process_datamart(slug_id: String, report_date:Option<NaiveDate>, config: 
             }
         };
 
+        // the +1 is a datamart oddity
+        if parsed.stats["returnedRows:"] == parsed.stats["userAllowedRows:"] + 1 {
+            println!("Warning: datamart response row count is max limit, there may be additional data available.");
+        }
+
         if let Some(message) = parsed.message {
             println!("Message from datamart: {}", message)
         };
 
         match parsed.results {
             Some(results) => {
-                for entry in results {
+                'entries: for entry in results {
                     let lookup = &config[&slug_id].independent;
                     let independent = {
                         match entry[lookup].as_ref() {
@@ -178,7 +183,9 @@ pub fn process_datamart(slug_id: String, report_date:Option<NaiveDate>, config: 
                                 match v.as_ref() {
                                     Some(v) => { v },
                                     None => {
-                                        return Err(format!("Failed to get value of independent column `{}` in response for date {}. All columns: {:#?}", column, independent, entry.keys()));
+                                        eprintln!("Failed to get value of independent column `{}` in response for date {}.", column, independent);
+                                        eprintln!("This entry will be skipped. If this happens frequently, your configuration may be wrong to assume this column is an independent.");
+                                        continue 'entries;
                                     }
                                 }
                             }
