@@ -7,6 +7,8 @@ use serde::Deserialize;
 
 use super::{USDADataPackage, USDADataPackageSection};
 
+const DATAMART_BASE_URL: &str = "https://mpr.datamart.ams.usda.gov/services/v1.1/reports";
+
 #[derive(Deserialize, Debug)]
 pub struct DatamartSection {
     pub alias: Option<String>,    // if present, will be used instead of hash key for table name
@@ -41,7 +43,7 @@ pub fn check_datamart() -> Result<(), String> {
     const QUICK_DATAMART_TIMEOUT: u64 = 3000;
 
     // this is the fastest query I can find
-    let target_url = "https://mpr.datamart.ams.usda.gov/services/v1.1/reports/2451/?q=report_date=01/01/2020".to_owned();
+    let target_url = format!("{}/2451/?q=report_date=01/01/2020", DATAMART_BASE_URL);
     
     let response = ureq::get(&target_url).timeout_connect(QUICK_DATAMART_TIMEOUT).timeout_read(QUICK_DATAMART_TIMEOUT).call();
         
@@ -75,7 +77,7 @@ pub fn process_datamart(slug_id: String, report_date:Option<NaiveDate>, config: 
         let section_data = result.sections.entry(section.to_owned()).or_insert_with(Vec::new);
 
         let target_url = {
-            let base_url = format!("https://mpr.datamart.ams.usda.gov/services/v1.1/reports/{}", slug_id);
+            let base_url = format!("{}/{}", DATAMART_BASE_URL, slug_id);
             match report_date {
                 Some(d) => {
                     format!(
