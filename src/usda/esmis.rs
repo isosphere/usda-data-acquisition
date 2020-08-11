@@ -38,6 +38,7 @@ pub fn fetch_releases_by_identifier(token:&str, identifier:String, start_date: O
     };
 
     let response = ureq::get(&target_url)
+        .set("User-Agent", super::USER_AGENT)
         .set("Authorization", &format!("Bearer {}", token))
         .timeout_connect(*http_connect_timeout).timeout_read(*http_receive_timeout).call();
 

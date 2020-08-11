@@ -9,7 +9,6 @@ extern crate serde;
 extern crate ureq;
 
 use clap::{Arg, App};
-use chrono::{Local, NaiveDate, Duration};
 use postgres::{Config, NoTls};
 
 use rpassword::prompt_password_stdout;
@@ -18,8 +17,7 @@ use walkdir::{WalkDir, DirEntry};
 mod usda;
 use usda::datamart::DatamartConfig;
 
-mod esmis;
-use esmis::fetch_releases_by_identifier;
+use usda::esmis::fetch_releases_by_identifier;
 
 mod noaa;
 mod integration;
@@ -217,6 +215,8 @@ fn main() {
         }
     };
 
+    println!("{:?}", usda::mars::list_reports(&secret_config.unwrap()["mars"]["key"]).unwrap());
+    /*
     let postgresql_host = Arc::new(matches.value_of("host").unwrap().to_string());
     let postgresql_user = Arc::new(matches.value_of("user").unwrap().to_string());
     let postgresql_dbname = { 
@@ -552,7 +552,7 @@ fn main() {
         match noaa::retrieve_noaa_ftp("matt@dataheck.com") {
             Ok(cursor) => {
                 println!("Parsing NOAA data...");
-                match noaa::process_noaa(cursor, Some(vec!["TMAX"]), Some(vec!["US"])) {
+                match noaa::process_noaa(cursor, Some(&["TMAX", "TAVG", "EVAP", "PRCP"]), Some(&["US"])) {
                     Ok(structure) => {
                         println!("Inserting into database...");
                         integration::noaa::insert_noaa_package(structure, &mut client).unwrap();
@@ -567,4 +567,5 @@ fn main() {
             }
         }
     }
+    */
 }

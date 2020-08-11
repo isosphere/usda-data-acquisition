@@ -1,9 +1,13 @@
 use std::collections::HashMap;
 
 pub mod datamart;
+pub mod esmis;
 pub mod legacy;
+pub mod mars;
 
 use chrono::NaiveDate;
+
+pub const USER_AGENT: &str = "data-acquistion/0.1";
 
 #[derive(Debug)]
 pub struct USDADataPackageSection {

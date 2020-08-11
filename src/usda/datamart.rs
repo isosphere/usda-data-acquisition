@@ -45,7 +45,7 @@ pub fn check_datamart() -> Result<(), String> {
     // this is the fastest query I can find
     let target_url = format!("{}/2451/?q=report_date=01/01/2020", DATAMART_BASE_URL);
     
-    let response = ureq::get(&target_url).timeout_connect(QUICK_DATAMART_TIMEOUT).timeout_read(QUICK_DATAMART_TIMEOUT).call();
+    let response = ureq::get(&target_url).set("User-Agent", super::USER_AGENT).timeout_connect(QUICK_DATAMART_TIMEOUT).timeout_read(QUICK_DATAMART_TIMEOUT).call();
         
     if let Some(error) = response.synthetic_error() {
         return Err(format!("Failed to retrieve data from datamart server with URL {}. Error: {}", target_url, error));
@@ -108,7 +108,7 @@ pub fn process_datamart(slug_id: String, report_date:Option<NaiveDate>, config: 
             }
         };
 
-        let response = ureq::get(&target_url).timeout_connect(*http_connect_timeout).timeout_read(*http_receive_timeout).call();
+        let response = ureq::get(&target_url).set("User-Agent", super::USER_AGENT).timeout_connect(*http_connect_timeout).timeout_read(*http_receive_timeout).call();
         
         if let Some(error) = response.synthetic_error() {
             return Err(format!("Failed to retrieve data from datamart server with URL {}. Error: {}", target_url, error));

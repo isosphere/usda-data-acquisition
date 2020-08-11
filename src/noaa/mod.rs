@@ -250,7 +250,7 @@ pub fn retrieve_noaa_ftp(email: &str) -> Result<Cursor<Vec<u8>>, String> {
 
 /// Parses a NOAA tar.gz file and returns an appropriate datastructure. The optional filters are logically processed with 
 /// case-insensitive "OR" logic with respect to other elements in the same vector, but "AND" logic with respect to the different filters.
-pub fn process_noaa<R: Read>(cursor: R, element_filter: Option<Vec<&str>>, station_country_filter: Option<Vec<&str>>) -> Result<Vec<Observation>, String> {   
+pub fn process_noaa<R: Read>(cursor: R, element_filter: Option<&[&str]>, station_country_filter: Option<&[&str]>) -> Result<Vec<Observation>, String> {   
     let tar = GzDecoder::new(cursor);
     match tar.header() {
         Some(_) => {},
@@ -367,7 +367,7 @@ US000041196194404TMIN  180  I  180  I  163  I  146  I  135  I-9999   -9999     1
     let result = encoder.finish().unwrap();
     
     let cursor = Cursor::new(result);
-    let results = process_noaa(cursor, Some(vec!["TAVG"]), Some(vec!["AE"])).unwrap();
+    let results = process_noaa(cursor, Some(&["TAVG"]), Some(&["AE"])).unwrap();
     assert_eq!(results.len(), 1);
     for observation in results {
         assert_eq!(observation.station_id.starts_with("AE"), true);
