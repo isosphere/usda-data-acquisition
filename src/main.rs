@@ -9,6 +9,7 @@ extern crate serde;
 extern crate ureq;
 
 use clap::{Arg, App};
+use chrono::{NaiveDate, Local, Duration};
 use postgres::{Config, NoTls};
 
 use rpassword::prompt_password_stdout;
@@ -215,8 +216,6 @@ fn main() {
         }
     };
 
-    println!("{:?}", usda::mars::list_reports(&secret_config.unwrap()["mars"]["key"]).unwrap());
-    /*
     let postgresql_host = Arc::new(matches.value_of("host").unwrap().to_string());
     let postgresql_user = Arc::new(matches.value_of("user").unwrap().to_string());
     let postgresql_dbname = { 
@@ -567,5 +566,4 @@ fn main() {
             }
         }
     }
-    */
 }
