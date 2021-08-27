@@ -403,8 +403,8 @@ fn main() {
                     }
                 }
             },
-            Err(_) => {
-                eprintln!("Datamart is not responsive, unable to fetch data.")
+            Err(e) => {
+                eprintln!("Datamart error unable to fetch data: {}", e)
             }
         }
     } else if matches.is_present("slug") {
