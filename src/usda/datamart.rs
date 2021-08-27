@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use chrono::{NaiveDate, Local};
+use chrono::{NaiveDate, Local, Datelike};
 use regex::Regex;
 use serde::Deserialize;
 
@@ -41,9 +41,10 @@ pub struct DatamartResponse {
 /// long timeout.
 pub fn check_datamart() -> Result<(), String> {
     const QUICK_DATAMART_TIMEOUT: u64 = 3000;
+    let current_year: i32 = Local::today().year();
 
     // this is the fastest query I can find
-    let target_url = format!("{}/2451/?q=report_date=01/01/2020", DATAMART_BASE_URL);
+    let target_url = format!("{0}/2451/?q=report_date=01/01/{1}:12/31/{1}", DATAMART_BASE_URL, current_year);
     
     let response = ureq::get(&target_url).set("User-Agent", super::USER_AGENT).timeout_connect(QUICK_DATAMART_TIMEOUT).timeout_read(QUICK_DATAMART_TIMEOUT).call();
         
